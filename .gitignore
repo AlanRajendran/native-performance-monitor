@@ -1,0 +1,10 @@
+/build/
+/release/
+/.vs/
+*.user
+*.suo
+*.pdb
+*.csv
+/test-artifacts/
+/window-test-artifacts/
+/uninstall-tests/
