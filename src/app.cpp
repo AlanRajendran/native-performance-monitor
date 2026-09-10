@@ -1,7 +1,6 @@
 #include "collector.h"
 #include "render.h"
 #include "settings.h"
-#include "taskbar.h"
 #include <algorithm>
 #include <commctrl.h>
 #include <dwmapi.h>
@@ -19,8 +18,8 @@ using namespace perf;
 using Microsoft::WRL::ComPtr;
 namespace
 {
-constexpr wchar_t controlClass[] = L"NativePerfMonitor.Controller.1";
-constexpr wchar_t surfaceClass[] = L"NativePerfMonitor.Surface.1";
+constexpr wchar_t controlClass[] = L"NativePerfMonitor.Controller.1.2";
+constexpr wchar_t surfaceClass[] = L"NativePerfMonitor.Surface.1.2";
 constexpr UINT sampleMessage = WM_APP + 1, themeMessage = WM_APP + 2, geometryMessage = WM_APP + 3,
                restoreMessage = WM_APP + 4, taskbarLayoutMessage = WM_APP + 5;
 enum Command : UINT
@@ -39,6 +38,9 @@ enum Command : UINT
     Uninstall,
     Exit,
     InsideTaskbar,
+    Opacity15 = 114,
+    Opacity25 = 115,
+    Opacity40 = 116,
     AdapterBase = 200
 };
 struct Options
@@ -236,11 +238,9 @@ class Application
     std::filesystem::path exe, data;
     HINSTANCE instance;
     HWND controller = nullptr;
-    Surface panel, strip;
+    Surface panel;
     Renderer renderer;
     Collector collector;
-    TaskbarObserver taskbarObserver;
-    bool stripHasRoom = false;
     Snapshot snapshot;
     std::vector<Adapter> adapters;
     NOTIFYICONDATAW tray{};
@@ -271,7 +271,6 @@ class Application
         exe = executablePath();
         data = options.data.empty() ? defaultDataDirectory() : std::filesystem::absolute(options.data);
         settings = loadSettings(data);
-        strip.strip = true;
     }
     ~Application()
     {
@@ -320,8 +319,8 @@ class Application
     }
     bool initialize()
     {
-        stopMessage = RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648");
-        singleton = CreateMutexW(nullptr, FALSE, L"Local\\NativePerfMonitor.6D845648");
+        stopMessage = RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.2");
+        singleton = CreateMutexW(nullptr, FALSE, L"Local\\NativePerfMonitor.6D845648.v1.2");
         if (GetLastError() == ERROR_ALREADY_EXISTS)
         {
             auto existing = FindWindowW(controlClass, nullptr);
@@ -349,11 +348,9 @@ class Application
         if (!controller)
             return false;
         DWORD ex = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT;
-        panel.hwnd = CreateWindowExW(ex, surfaceClass, L"Performance monitor desktop", WS_POPUP, 0, 0, 420,
-                                     548, nullptr, nullptr, instance, &panel);
-        strip.hwnd = CreateWindowExW(ex, surfaceClass, L"Performance monitor strip", WS_POPUP, 0, 0, 344, 54,
-                                     nullptr, nullptr, instance, &strip);
-        if (!panel.hwnd || !strip.hwnd)
+        panel.hwnd = CreateWindowExW(ex, surfaceClass, L"Performance monitor desktop", WS_POPUP, 0, 0, 450,
+                                     880, nullptr, nullptr, instance, &panel);
+        if (!panel.hwnd)
             return false;
         adapters = enumerateAdapters();
         if (std::none_of(adapters.begin(), adapters.end(),
@@ -370,7 +367,6 @@ class Application
         {
         }
         applyMode();
-        taskbarObserver.start(controller, taskbarLayoutMessage);
         layout();
         addTray();
         foregroundHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, eventHook,
@@ -383,7 +379,6 @@ class Application
         {
             snapshot = demonstrationSnapshot();
             SetWindowTextW(panel.hwnd, renderer.accessibleText(snapshot, false).c_str());
-            SetWindowTextW(strip.hwnd, renderer.accessibleText(snapshot, true).c_str());
         }
         else
             collector.start(settings.adapter, controller, sampleMessage);
@@ -397,7 +392,7 @@ class Application
             benchmarkFile.open(options.report);
             benchmarkFile << "elapsed_seconds,cpu_machine_percent,working_set_bytes,private_bytes,handles,"
                              "gdi_objects,user_objects,system_cpu_percent,gpu_percent,vram_percent,ram_"
-                             "percent,eligible_processes\n";
+                             "percent,eligible_processes,cores,valid_cores\n";
         }
         persist();
         paintBoth();
@@ -445,8 +440,6 @@ class Application
         contrast = highContrast();
         if (panel.hwnd)
             applyBackdrop(panel);
-        if (strip.hwnd)
-            applyBackdrop(strip);
     }
     void applyBackdrop(Surface &s)
     {
@@ -464,7 +457,7 @@ class Application
     }
     void applyMode()
     {
-        for (auto s : {&panel, &strip})
+        for (auto s : {&panel})
         {
             s->target.Reset();
             DWORD style = WS_POPUP | (!settings.locked && !s->strip ? WS_THICKFRAME : 0);
@@ -477,7 +470,7 @@ class Application
             applyBackdrop(*s);
         }
         if (settings.locked)
-            panel.scroll = strip.scroll = 0;
+            panel.scroll = 0;
     }
     MONITORINFO primaryInfo()
     {
@@ -500,7 +493,7 @@ class Application
                 sawPanel = true;
                 continue;
             }
-            if (h == strip.hwnd || h == controller || !IsWindowVisible(h) || IsIconic(h))
+            if (h == controller || !IsWindowVisible(h) || IsIconic(h))
                 continue;
             wchar_t cls[128]{};
             GetClassNameW(h, cls, 128);
@@ -545,7 +538,7 @@ class Application
         UINT dpi = GetDpiForWindow(panel.hwnd);
         if (!dpi)
             dpi = 96;
-        panel.dpi = strip.dpi = float(dpi);
+        panel.dpi = float(dpi);
         float scale = dpi / 96.f;
         auto px = [&](float n) { return int(std::lround(n * scale)); };
         Rect work{m.rcWork.left, m.rcWork.top, m.rcWork.right - m.rcWork.left,
@@ -553,143 +546,36 @@ class Application
         int pw = settings.panelW, ph = settings.panelH;
         if (settings.compact)
         {
-            pw = 360;
-            ph = 460;
+            pw = 420;
+            ph = 720;
         }
         if ((work.h - px(48) < px(float(ph)) || work.w - px(48) < px(float(pw))) && !settings.compact)
         {
-            pw = 360;
-            ph = 460;
+            pw = 420;
+            ph = 720;
         }
         int x =
             settings.panelX < 0 ? work.x + work.w - px(float(pw + 24)) : work.x + px(float(settings.panelX));
         int y = settings.panelY < 0 ? work.y + px(24) : work.y + px(float(settings.panelY));
-        auto p = clampRect({x, y, px(float(pw)), px(float(ph))}, work, px(300), px(260));
+        auto p = clampRect({x, y, px(float(pw)), px(float(ph))}, work, px(360), px(300));
         auto anchor = settings.locked ? desktopAnchor() : HWND_TOP;
         // Geometry must succeed independently of shell z-order restrictions.
         SetWindowPos(panel.hwnd, nullptr, p.x, p.y, p.w, p.h, SWP_NOACTIVATE | SWP_NOZORDER);
         if (anchor != panel.hwnd)
         {
             SetLastError(0);
-            bool placed = SetWindowPos(panel.hwnd, anchor, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
-            SetPropW(panel.hwnd, L"NativePerfMonitor.ZOrderError", reinterpret_cast<HANDLE>(uintptr_t(placed ? 0 : GetLastError())));
+            bool placed =
+                SetWindowPos(panel.hwnd, anchor, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+            SetPropW(panel.hwnd, L"NativePerfMonitor.ZOrderError",
+                     reinterpret_cast<HANDLE>(uintptr_t(placed ? 0 : GetLastError())));
             SetPropW(panel.hwnd, L"NativePerfMonitor.ZOrderAnchor", anchor);
         }
-        APPBARDATA bar{sizeof(bar)};
-        RECT task = m.rcWork;
-        auto ok = SHAppBarMessage(ABM_GETTASKBARPOS, &bar);
-        if (ok)
-            task = bar.rc;
-        int sw = px(344), sh = px(54),
-            sx = settings.stripX < 0 ? work.x + work.w - sw - px(24) : work.x + px(float(settings.stripX)),
-            sy = work.y + work.h - sh - px(6);
-        if (ok)
-        {
-            if (bar.uEdge == ABE_BOTTOM)
-                sy = task.top - sh - px(6);
-            else if (bar.uEdge == ABE_TOP)
-                sy = task.bottom + px(6);
-            else if (bar.uEdge == ABE_LEFT)
-                sx = task.right + px(6);
-            else if (bar.uEdge == ABE_RIGHT)
-                sx = task.left - sw - px(6);
-        }
-        auto r = clampRect({sx, sy, sw, sh},
-                           {m.rcMonitor.left, m.rcMonitor.top, m.rcMonitor.right - m.rcMonitor.left,
-                            m.rcMonitor.bottom - m.rcMonitor.top},
-                           px(280), sh);
-        stripHasRoom = !settings.insideTaskbar;
-        if (settings.insideTaskbar)
-        {
-            auto observed = taskbarObserver.snapshot();
-            auto bounds = observed.bounds;
-            bool horizontal = bounds.w > bounds.h && bounds.x >= m.rcMonitor.left &&
-                              bounds.x + bounds.w <= m.rcMonitor.right;
-            int height = std::min(px(42), bounds.h - px(6));
-            if (observed.reliable && horizontal && height >= px(28))
-            {
-                auto slot = taskbarSlot(bounds, observed.occupied, sw, height, sx, px(8));
-                if (!slot) slot = taskbarSlot(bounds, observed.occupied, px(280), height, sx, px(8));
-                if (slot)
-                {
-                    r = *slot;
-                    stripHasRoom = true;
-                }
-            }
-        }
-        SetWindowPos(strip.hwnd, HWND_TOPMOST, r.x, r.y, r.w, r.h, SWP_NOACTIVATE);
         visibility();
         layingOut = false;
-    }
-    bool hideStrip()
-    {
-        if (!settings.locked)
-            return false;
-        auto m = primaryInfo();
-        auto fg = GetForegroundWindow();
-        wchar_t cls[128]{};
-        GetClassNameW(fg, cls, 128);
-        if (fg && fg != panel.hwnd && fg != strip.hwnd && wcscmp(cls, L"Progman") &&
-            wcscmp(cls, L"WorkerW") && wcscmp(cls, L"Shell_TrayWnd"))
-        {
-            RECT r{};
-            if (FAILED(DwmGetWindowAttribute(fg, DWMWA_EXTENDED_FRAME_BOUNDS, &r, sizeof(r))))
-                GetWindowRect(fg, &r);
-            if (r.left <= m.rcMonitor.left && r.top <= m.rcMonitor.top && r.right >= m.rcMonitor.right &&
-                r.bottom >= m.rcMonitor.bottom &&
-                (!(GetWindowLongPtrW(fg, GWL_STYLE) & WS_CAPTION) || !IsZoomed(fg)))
-                return true;
-        }
-        APPBARDATA bar{sizeof(bar)};
-        if (SHAppBarMessage(ABM_GETSTATE, &bar) & ABS_AUTOHIDE)
-        {
-            auto task = FindWindowW(L"Shell_TrayWnd", nullptr);
-            RECT r{}, visible{};
-            if (task && GetWindowRect(task, &r))
-            {
-                IntersectRect(&visible, &r, &m.rcMonitor);
-                if (!IsWindowVisible(task) || visible.bottom - visible.top < 8 ||
-                    visible.right - visible.left < 8)
-                    return true;
-            }
-        }
-        struct Context
-        {
-            RECT strip;
-            bool blocked = false;
-        } ctx{};
-        GetWindowRect(strip.hwnd, &ctx.strip);
-        EnumWindows(
-            [](HWND h, LPARAM value) -> BOOL
-            {
-                auto &c = *reinterpret_cast<Context *>(value);
-                if (!IsWindowVisible(h) || IsIconic(h))
-                    return TRUE;
-                wchar_t name[128]{};
-                GetClassNameW(h, name, 128);
-                if (wcscmp(name, L"#32768") && wcscmp(name, L"XamlExplorerHostIslandWindow") &&
-                    wcscmp(name, L"Windows.UI.Core.CoreWindow") && wcscmp(name, L"ControlCenterWindow"))
-                    return TRUE;
-                DWORD cloaked = 0;
-                DwmGetWindowAttribute(h, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
-                if (cloaked)
-                    return TRUE;
-                RECT r{}, intersection{};
-                GetWindowRect(h, &r);
-                if (IntersectRect(&intersection, &r, &c.strip))
-                {
-                    c.blocked = true;
-                    return FALSE;
-                }
-                return TRUE;
-            },
-            reinterpret_cast<LPARAM>(&ctx));
-        return ctx.blocked;
     }
     void visibility()
     {
         show(panel, settings.panel);
-        show(strip, settings.strip && stripHasRoom && !hideStrip());
     }
     void show(Surface &s, bool visible)
     {
@@ -746,7 +632,9 @@ class Application
         s.dpi = float(GetDpiForWindow(s.hwnd));
         if (s.dpi < 48)
             s.dpi = 96;
-        auto p = palette(s.strip ? shellDark : dark, contrast);
+        auto p = palette(dark, contrast);
+        if (!contrast)
+            p.surface.a = settings.opacity / 100.f;
         if (!s.bitmap.resize(w, h))
             return;
         auto hr = renderer.drawBitmap(s.bitmap, s.dpi, snapshot, p, s.strip, settings.locked, s.scroll);
@@ -760,20 +648,16 @@ class Application
     void paintBoth()
     {
         paint(panel);
-        paint(strip);
     }
     void update()
     {
         if (!options.demo)
             snapshot = collector.snapshot();
         SetWindowTextW(panel.hwnd, renderer.accessibleText(snapshot, false).c_str());
-        SetWindowTextW(strip.hwnd, renderer.accessibleText(snapshot, true).c_str());
         if (!snapshot.paused)
         {
             if (!occluded(panel))
                 paint(panel);
-            if (!occluded(strip))
-                paint(strip);
         }
         std::wstring tooltip = L"CPU " + formatPercent(snapshot.current[0]) + L" | GPU " +
                                formatPercent(snapshot.current[1]) + L"\nVRAM " +
@@ -785,20 +669,17 @@ class Application
     }
     std::wstring diagnostics()
     {
-        auto text = L"Native Performance Monitor 1.1.0\n\n" + renderer.accessibleText(snapshot, false) +
+        auto text = L"Native Performance Monitor 1.2.0\n\n" + renderer.accessibleText(snapshot, false) +
                     L"\n\nAdapter: " + snapshot.gpuName +
                     L"\nCollection: 1 second; application ranking: 2 seconds.\n";
         text += L"CPU is busy time; application RAM is private resident memory.\nGPU and VRAM refer to the "
                 L"selected adapter.\nProtected processes are omitted; unavailable values are dashes.\n\n";
         text += snapshot.status.empty() ? L"Counter status: ready.\n" : snapshot.status + L"\n";
-        text += L"\nSurface: " + std::wstring(contrast ? L"high contrast / system colors"
-                              : settings.locked ? L"translucent / locked / click-through"
-                                                : L"translucent / unlocked");
-        auto taskbar = taskbarObserver.snapshot();
-        text += L"\nTaskbar strip: " + std::wstring(!settings.insideTaskbar ? L"above taskbar"
-                    : stripHasRoom ? L"inside taskbar, between controls"
-                                   : L"hidden: waiting for a free taskbar section");
-        text += L"\nTaskbar control rectangles: " + std::to_wstring(taskbar.occupied.size());
+        text += L"\nSurface: " + std::wstring(contrast          ? L"high contrast / system colors"
+                                              : settings.locked ? L"translucent / locked / click-through"
+                                                                : L"translucent / unlocked");
+        text += L"\nDesktop panel only. Per-core history continues while hidden. Background opacity follows "
+                L"the tray setting.";
         text += L"\nSettings: " + data.wstring() + L"\nAutostart: " +
                 (startupEnabled(exe) ? std::wstring(L"enabled for this executable") : std::wstring(L"off"));
         return text;
@@ -839,7 +720,7 @@ class Application
         if (m->CtlType != ODT_MENU || !m->itemData)
             return FALSE;
         auto &item = *reinterpret_cast<MenuEntry *>(m->itemData);
-        float scale = strip.dpi / 96.f;
+        float scale = panel.dpi / 96.f;
         HDC dc = GetDC(controller);
         auto old = SelectObject(dc, menuFont);
         SIZE size{};
@@ -867,7 +748,7 @@ class Application
         auto brush = CreateSolidBrush(bg);
         FillRect(d->hDC, &d->rcItem, brush);
         DeleteObject(brush);
-        float scale = strip.dpi / 96.f;
+        float scale = panel.dpi / 96.f;
         auto pen = CreatePen(PS_SOLID, 1, asRgb(p.border));
         auto oldPen = SelectObject(d->hDC, pen);
         int mid = (d->rcItem.top + d->rcItem.bottom) / 2;
@@ -918,12 +799,17 @@ class Application
         auto add = [&](UINT id, const wchar_t *name, bool checked = false, bool disabled = false)
         { AppendMenuW(menu, MF_STRING | (checked ? MF_CHECKED : 0) | (disabled ? MF_GRAYED : 0), id, name); };
         add(ShowPanel, L"Desktop panel", settings.panel);
-        add(ShowStrip, L"Taskbar strip", settings.strip);
-        add(InsideTaskbar, L"Inside taskbar", settings.insideTaskbar);
-        add(LockSurfaces, L"Lock surfaces", settings.locked);
+        add(LockSurfaces, L"Lock panel", settings.locked);
+        auto opacityMenu = CreatePopupMenu();
+        AppendMenuW(opacityMenu, MF_STRING | (settings.opacity == 15 ? MF_CHECKED : 0), Opacity15,
+                    L"15% opacity - most transparent");
+        AppendMenuW(opacityMenu, MF_STRING | (settings.opacity == 25 ? MF_CHECKED : 0), Opacity25,
+                    L"25% opacity - default");
+        AppendMenuW(opacityMenu, MF_STRING | (settings.opacity == 40 ? MF_CHECKED : 0), Opacity40,
+                    L"40% opacity - more contrast");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(opacityMenu), L"Background opacity");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         add(MovePanel, L"Move / resize desktop panel…");
-        add(MoveStrip, L"Move taskbar strip…");
         add(ResetPositions, L"Reset positions");
         auto gpu = CreatePopupMenu();
         for (size_t i = 0; i < adapters.size(); ++i)
@@ -946,7 +832,7 @@ class Application
         auto p = palette(shellDark, contrast);
         menuBackground =
             CreateSolidBrush(RGB(BYTE(p.surface.r * 255), BYTE(p.surface.g * 255), BYTE(p.surface.b * 255)));
-        menuFont = CreateFontW(-int(12 * strip.dpi / 96.f), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        menuFont = CreateFontW(-int(12 * panel.dpi / 96.f), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                DEFAULT_PITCH, L"Segoe UI");
         styleMenu(menu);
@@ -981,47 +867,41 @@ class Application
         }
         switch (command)
         {
+        case Opacity15:
+        case Opacity25:
+        case Opacity40:
+            settings.opacity = command == Opacity15 ? 15 : command == Opacity25 ? 25 : 40;
+            break;
         case ShowPanel:
             settings.panel = !settings.panel;
-            break;
-        case ShowStrip:
-            settings.strip = !settings.strip;
-            break;
-        case InsideTaskbar:
-            settings.insideTaskbar = !settings.insideTaskbar;
-            taskbarObserver.request();
             break;
         case LockSurfaces:
             settings.locked = !settings.locked;
             applyMode();
             break;
         case MovePanel:
-        case MoveStrip:
             settings.locked = false;
-            if (command == MovePanel)
-                settings.panel = true;
-            else
-                settings.strip = true;
+            settings.panel = true;
             applyMode();
             layout();
-            ShowWindow(command == MovePanel ? panel.hwnd : strip.hwnd, SW_SHOW);
-            SetForegroundWindow(command == MovePanel ? panel.hwnd : strip.hwnd);
+            ShowWindow(panel.hwnd, SW_SHOW);
+            SetForegroundWindow(panel.hwnd);
             break;
         case ResetPositions:
             settings.panelX = settings.panelY = settings.stripX = -1;
-            settings.panelW = 420;
-            settings.panelH = 548;
+            settings.panelW = 450;
+            settings.panelH = 880;
             panel.scroll = 0;
             break;
         case StandardSize:
             settings.compact = false;
-            settings.panelW = 420;
-            settings.panelH = 548;
+            settings.panelW = 450;
+            settings.panelH = 880;
             break;
         case CompactSize:
             settings.compact = true;
-            settings.panelW = 360;
-            settings.panelH = 460;
+            settings.panelW = 420;
+            settings.panelH = 720;
             break;
         case Startup:
             if (!options.isolated)
@@ -1042,38 +922,18 @@ class Application
             return;
         case Uninstall:
         {
-            auto script = exe.parent_path() / L"Uninstall.ps1";
-            if (!std::filesystem::exists(script))
+            auto uninstaller = exe.parent_path() / L"Uninstall.exe";
+            if (!std::filesystem::exists(uninstaller))
             {
-                MessageBoxW(
-                    controller,
-                    L"Uninstall.ps1 is missing. Extract the complete portable ZIP before uninstalling.",
-                    L"Performance monitor", MB_ICONERROR);
+                MessageBoxW(controller, L"Uninstall.exe is missing. Extract the complete portable ZIP.",
+                            L"Performance monitor", MB_ICONERROR);
                 return;
             }
-            if (MessageBoxW(controller,
-                            L"Remove this portable application's files, its settings, and its optional "
-                            L"startup entry? Unrelated files will be kept.",
-                            L"Uninstall Performance monitor",
-                            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
-                return;
-            auto args = L"-NoProfile -ExecutionPolicy Bypass -File \"" + script.wstring() +
-                        L"\" -Yes -DataDirectory \"" + data.wstring() + L"\"" +
-                        (options.isolated ? L" -Isolated" : L"");
-            SHELLEXECUTEINFOW info{sizeof(info)};
-            info.fMask = SEE_MASK_NOCLOSEPROCESS;
-            info.lpFile = L"powershell.exe";
-            info.lpParameters = args.c_str();
-            info.nShow = SW_HIDE;
-            if (!ShellExecuteExW(&info))
-            {
-                MessageBoxW(controller, L"Could not start the uninstaller.", L"Performance monitor",
+            auto result = ShellExecuteW(controller, L"open", uninstaller.c_str(), nullptr,
+                                        exe.parent_path().c_str(), SW_SHOWNORMAL);
+            if (reinterpret_cast<INT_PTR>(result) <= 32)
+                MessageBoxW(controller, L"Could not open Uninstall.exe.", L"Performance monitor",
                             MB_ICONERROR);
-                return;
-            }
-            if (info.hProcess)
-                CloseHandle(info.hProcess);
-            PostMessageW(controller, WM_CLOSE, 0, 0);
             return;
         }
         case Exit:
@@ -1126,7 +986,9 @@ class Application
                           << GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS);
             for (auto n : snapshot.current)
                 benchmarkFile << ',' << n;
-            benchmarkFile << ',' << snapshot.processes << '\n';
+            benchmarkFile << ',' << snapshot.processes << ',' << snapshot.cores.size() << ','
+                          << std::count_if(snapshot.cores.begin(), snapshot.cores.end(),
+                                           [](const auto &core) { return valid(core.current); }) << '\n';
         }
         lastBenchmarkMs = now;
         lastBenchmarkCpu = cpu;
@@ -1140,7 +1002,7 @@ class Application
                 auto summary = options.report;
                 summary.replace_extension(L"summary.txt");
                 std::ofstream f(summary);
-                f << "NativePerfMonitor 1.1.0\nMeasured seconds: " << double(now - measurementStartMs) / 1000
+                f << "NativePerfMonitor 1.2.0\nMeasured seconds: " << double(now - measurementStartMs) / 1000
                   << "\nWarm-up seconds: " << options.warmup << "\nSamples: " << benchmarkRows
                   << "\nLogical processors: " << GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)
                   << "\nAverage machine CPU percent: " << total << "\nSingle-core equivalent percent: "
@@ -1179,10 +1041,6 @@ class Application
             persist();
             paintBoth();
             return 0;
-        case taskbarLayoutMessage:
-            layout();
-            paint(strip);
-            return 0;
         case sampleMessage:
             update();
             return 0;
@@ -1207,7 +1065,6 @@ class Application
                 collector.reset();
             return TRUE;
         case geometryMessage:
-            taskbarObserver.request();
             SetTimer(h, 2, 100, nullptr);
             return 0;
         case WM_TIMER:
@@ -1244,9 +1101,7 @@ class Application
                 quitting = true;
                 Shell_NotifyIconW(NIM_DELETE, &tray);
                 collector.stop();
-                taskbarObserver.stop();
                 DestroyWindow(panel.hwnd);
-                DestroyWindow(strip.hwnd);
                 DestroyWindow(h);
             }
             return 0;
@@ -1318,7 +1173,7 @@ class Application
             auto p = reinterpret_cast<MINMAXINFO *>(l);
             auto area = primaryInfo().rcWork;
             auto scale = s.dpi / 96;
-            p->ptMinTrackSize = {std::min(LONG(300 * scale), area.right - area.left),
+            p->ptMinTrackSize = {std::min(LONG(360 * scale), area.right - area.left),
                                  std::min(LONG(260 * scale), area.bottom - area.top)};
             p->ptMaxTrackSize = {area.right - area.left, area.bottom - area.top};
             return 0;
@@ -1375,7 +1230,7 @@ class Application
                 RECT r{};
                 GetClientRect(s.hwnd, &r);
                 float h = r.bottom * 96.f / s.dpi;
-                float content = r.right * 96.f / s.dpi < 400 || h < 520 ? 460.f : 548.f;
+                float content = panelContentHeight(snapshot.cores);
                 s.scroll = std::clamp(s.scroll - GET_WHEEL_DELTA_WPARAM(w) / 120.f * 36, 0.f,
                                       std::max(0.f, content - h));
                 paint(s);
@@ -1417,10 +1272,10 @@ int renderPreview(const std::filesystem::path &dir)
         return 2;
     auto snapshot = demonstrationSnapshot();
     for (bool dark : {false, true})
-        for (bool strip : {false, true})
+        for (bool strip : {false})
         {
             BitmapSurface b;
-            if (!b.resize(strip ? 688 : 840, strip ? 108 : 1096))
+            if (!b.resize(900, 1760))
                 return 3;
             if (FAILED(renderer.drawBitmap(b, 192, snapshot, palette(dark), strip, true)))
                 return 4;
@@ -1440,7 +1295,7 @@ int WINAPI wWinMain(HINSTANCE h, HINSTANCE, PWSTR, int)
     {
         auto existing = FindWindowW(controlClass, nullptr);
         if (existing)
-            PostMessageW(existing, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648"), 0, 0);
+            PostMessageW(existing, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.2"), 0, 0);
         if (options.prepare)
         {
             std::wstring error;

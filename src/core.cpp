@@ -274,14 +274,14 @@ Rect clampRect(Rect r, Rect area, int minWidth, int minHeight)
     return r;
 }
 std::optional<Rect> taskbarSlot(Rect bar, const std::vector<Rect> &occupied, int width, int height,
-                               int preferredX, int margin)
+                                int preferredX, int margin)
 {
     if (bar.w < width + margin * 2 || bar.h < height || width <= 0 || height <= 0)
         return std::nullopt;
     std::vector<std::pair<int, int>> blocks;
     for (const auto &r : occupied)
-        if (r.w > 0 && r.h > 0 && r.y < bar.y + bar.h && r.y + r.h > bar.y &&
-            r.x < bar.x + bar.w && r.x + r.w > bar.x)
+        if (r.w > 0 && r.h > 0 && r.y < bar.y + bar.h && r.y + r.h > bar.y && r.x < bar.x + bar.w &&
+            r.x + r.w > bar.x)
             blocks.emplace_back(std::max(bar.x, r.x - margin), std::min(bar.x + bar.w, r.x + r.w + margin));
     std::sort(blocks.begin(), blocks.end());
     blocks.emplace_back(bar.x + bar.w - margin, bar.x + bar.w);
@@ -316,10 +316,11 @@ std::wstring formatBytes(double n, bool compact)
     if (!valid(n))
         return L"—";
     wchar_t b[64];
-    if (n >= 1073741824)
-        swprintf_s(b, compact ? L"%.1fG" : L"%.1f GiB", n / 1073741824);
+    (void)compact;
+    if (n >= 1000000000)
+        swprintf_s(b, L"%.2f GB", n / 1000000000);
     else
-        swprintf_s(b, compact ? L"%.0fM" : L"%.0f MiB", n / 1048576);
+        swprintf_s(b, L"%.0f MB", n / 1000000);
     return b;
 }
 } // namespace perf

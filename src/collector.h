@@ -1,5 +1,6 @@
 #pragma once
 #include "core.h"
+#include "cpu.h"
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -20,6 +21,8 @@ struct Adapter
 struct Snapshot
 {
     History history;
+    std::vector<CpuCore> cores;
+    std::wstring cpuName;
     Metrics current = noMetrics;
     double ramUsed = missing, ramTotal = missing, vramUsed = missing, vramTotal = missing;
     uint64_t adapter = 0, updatedMs = 0, rankUpdatedMs = 0;

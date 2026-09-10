@@ -4,12 +4,13 @@
 #include <windows.h>
 namespace perf
 {
-inline constexpr wchar_t applicationId[] = L"NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2";
+inline constexpr wchar_t applicationId[] = L"NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.2";
 struct Settings
 {
-    bool panel = true, strip = true, locked = true, compact = false;
+    bool panel = true, strip = false, locked = true, compact = false;
     bool insideTaskbar = true;
-    int panelX = -1, panelY = -1, panelW = 420, panelH = 548, stripX = -1;
+    int panelX = -1, panelY = -1, panelW = 450, panelH = 880, stripX = -1;
+    int opacity = 25;
     uint64_t adapter = 0;
 };
 std::filesystem::path executablePath();

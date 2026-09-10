@@ -83,7 +83,7 @@ struct Rect
 };
 Rect clampRect(Rect value, Rect work, int minWidth, int minHeight);
 std::optional<Rect> taskbarSlot(Rect bar, const std::vector<Rect> &occupied, int width, int height,
-                               int preferredX, int margin);
+                                int preferredX, int margin);
 std::wstring formatPercent(double n, bool decimal = false);
 std::wstring formatBytes(double n, bool compact = false);
 } // namespace perf

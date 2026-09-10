@@ -18,7 +18,8 @@ class TaskbarObserver
     std::thread thread_;
     std::mutex mutex_;
     TaskbarSnapshot latest_;
-public:
+
+  public:
     TaskbarObserver();
     ~TaskbarObserver();
     void start(HWND notify, UINT message);

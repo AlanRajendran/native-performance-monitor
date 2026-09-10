@@ -123,7 +123,7 @@ struct Meta
 struct Collector::Impl
 {
     PDH_HQUERY fast = nullptr, slow = nullptr;
-    Counter cpu, engines, adapterMemory, pids, privateWorkingSet, processGpuMemory;
+    Counter cpu, perCpu, engines, adapterMemory, pids, privateWorkingSet, processGpuMemory;
     std::vector<Adapter> adapters;
     std::unordered_map<DWORD, std::unique_ptr<Meta>> metadata;
     std::map<DWORD, std::map<EngineKey, double>> gpuWindow;
@@ -137,6 +137,8 @@ struct Collector::Impl
     Impl()
     {
         adapters = enumerateAdapters();
+        current.cores = enumerateCpuCores();
+        current.cpuName = cpuBrand();
         processors = std::max(1UL, GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
         ProcessIdToSessionId(GetCurrentProcessId(), &session);
         wchar_t w[MAX_PATH];
@@ -146,8 +148,9 @@ struct Collector::Impl
         PdhOpenQueryW(nullptr, 0, &slow);
         if (fast)
         {
-            if (!cpu.add(fast, L"\\Processor Information(_Total)\\% Processor Time"))
-                cpu.add(fast, L"\\Processor(_Total)\\% Processor Time");
+            if (!cpu.add(fast, L"\\Processor Information(_Total)\\% Idle Time"))
+                cpu.add(fast, L"\\Processor(_Total)\\% Idle Time");
+            perCpu.add(fast, L"\\Processor Information(*)\\% Idle Time");
             engines.add(fast, L"\\GPU Engine(*)\\Utilization Percentage");
             adapterMemory.add(fast, L"\\GPU Adapter Memory(*)\\Dedicated Usage");
             PdhCollectQueryData(fast);
@@ -355,10 +358,37 @@ struct Collector::Impl
             }
         }
         bool fastOk = fast && PdhCollectQueryData(fast) == ERROR_SUCCESS;
+        if (tick % 60 == 0 || GetActiveProcessorCount(ALL_PROCESSOR_GROUPS) != processors)
+        {
+            auto discovered = enumerateCpuCores();
+            bool changed = discovered.size() != current.cores.size();
+            if (!changed)
+                for (size_t i = 0; i < discovered.size(); ++i)
+                    changed = changed || discovered[i].logical != current.cores[i].logical ||
+                              discovered[i].efficiencyClass != current.cores[i].efficiencyClass;
+            if (changed && !discovered.empty())
+                current.cores = std::move(discovered);
+            processors = std::max(1UL, GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
+        }
+        std::map<std::pair<unsigned, unsigned>, double> logicalValues;
+        bool coresOk = fastOk && perCpu.each(
+                                     [&](std::wstring_view name, double value)
+                                     {
+                                         auto key = parseCpuInstance(name);
+                                         if (key)
+                                             logicalValues[*key] = valid(value) ? std::clamp(100.0 - value, 0.0, 100.0) : missing;
+                                     });
+        for (auto &core : current.cores)
+        {
+            core.current = coresOk && intervalValid ? coreUtilization(core, logicalValues) : missing;
+            core.history.push(int64_t(now / 1000), {core.current, missing, missing, missing});
+        }
+        if (!coresOk)
+            current.status += L"Per-core counters unavailable. ";
         current.current = noMetrics;
         current.current[0] = fastOk && intervalValid ? cpu.value() : missing;
         if (valid(current.current[0]))
-            current.current[0] = std::min(100.0, current.current[0]);
+            current.current[0] = std::clamp(100.0 - current.current[0], 0.0, 100.0);
         MEMORYSTATUSEX mem{sizeof(mem)};
         if (GlobalMemoryStatusEx(&mem))
         {

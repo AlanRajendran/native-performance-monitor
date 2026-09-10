@@ -22,7 +22,7 @@ std::filesystem::path defaultDataDirectory()
         out = p;
         CoTaskMemFree(p);
     }
-    return out / L"NativePerfMonitor";
+    return out / L"NativePerfMonitor-1.2";
 }
 bool hasReparseAncestor(const std::filesystem::path &value)
 {
@@ -50,7 +50,7 @@ static bool ownedData(const std::filesystem::path &dir)
     std::ifstream f(marker);
     std::string s;
     std::getline(f, s);
-    return s == "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2";
+    return s == "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.2";
 }
 Settings loadSettings(const std::filesystem::path &dir)
 {
@@ -74,7 +74,9 @@ Settings loadSettings(const std::filesystem::path &dir)
             auto n = std::stoll(v, &used);
             if (used != v.size())
                 continue;
-            if (k == "panel")
+            if (k == "opacity")
+                r.opacity = int(std::clamp(n, 10LL, 80LL));
+            else if (k == "panel")
                 r.panel = n != 0;
             else if (k == "strip")
                 r.strip = n != 0;
@@ -112,6 +114,7 @@ Settings loadSettings(const std::filesystem::path &dir)
             }
         }
     }
+    r.strip = false;
     return r;
 }
 bool saveSettings(const std::filesystem::path &dir, const Settings &s, std::wstring &error)
@@ -137,7 +140,7 @@ bool saveSettings(const std::filesystem::path &dir, const Settings &s, std::wstr
     if (!std::filesystem::exists(marker))
     {
         std::ofstream f(marker);
-        f << "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2\n";
+        f << "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.2\n";
         if (!f)
         {
             error = L"Cannot write settings marker.";
@@ -156,7 +159,8 @@ bool saveSettings(const std::filesystem::path &dir, const Settings &s, std::wstr
           << "panel=" << s.panel << "\nstrip=" << s.strip << "\nlocked=" << s.locked
           << "\ncompact=" << s.compact << "\npanelX=" << s.panelX << "\npanelY=" << s.panelY
           << "\npanelW=" << s.panelW << "\npanelH=" << s.panelH << "\nstripX=" << s.stripX
-          << "\nadapter=" << s.adapter << "\ninsideTaskbar=" << s.insideTaskbar << "\n";
+          << "\nopacity=" << s.opacity << "\nadapter=" << s.adapter << "\ninsideTaskbar=" << s.insideTaskbar
+          << "\n";
         if (!f)
         {
             error = L"Cannot write settings.";
@@ -183,7 +187,7 @@ static std::wstring readStartup()
 {
     wchar_t value[2048]{};
     DWORD bytes = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER, runKey, L"NativePerfMonitor", RRF_RT_REG_SZ, nullptr, value,
+    if (RegGetValueW(HKEY_CURRENT_USER, runKey, L"NativePerfMonitor-1.2", RRF_RT_REG_SZ, nullptr, value,
                      &bytes) != ERROR_SUCCESS)
         return {};
     return value;
@@ -214,7 +218,7 @@ bool setStartup(const std::filesystem::path &exe, bool enabled, std::wstring &er
         RegCreateKeyExW(HKEY_CURRENT_USER, runKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
     if (st == ERROR_SUCCESS)
     {
-        st = enabled ? RegSetValueExW(key, L"NativePerfMonitor", 0, REG_SZ,
+        st = enabled ? RegSetValueExW(key, L"NativePerfMonitor-1.2", 0, REG_SZ,
                                       reinterpret_cast<const BYTE *>(expected.c_str()),
                                       DWORD((expected.size() + 1) * sizeof(wchar_t)))
                      : RegDeleteValueW(key, L"NativePerfMonitor");

@@ -19,7 +19,7 @@ Palette palette(bool dark, bool high)
              : Palette{color(0xf6f7f9), color(0x1c1e22),
                        color(0x5c626b), color(0xd3d8df),
                        color(0xe0e4e9), {color(0x0077b5), color(0x8056b7), color(0x007e83), color(0xb66e13)}};
-    p.surface.a = .62f;
+    p.surface.a = .25f;
     p.border.a = .40f;
     p.grid.a = .40f;
     if (high)
@@ -106,10 +106,10 @@ bool BitmapSurface::save(const std::filesystem::path &path) const
                                          width * height * 4, static_cast<BYTE *>(pixels), &bitmapSource)) ||
         FAILED(f->CreateFormatConverter(&converter)) ||
         FAILED(converter->Initialize(bitmapSource.Get(), GUID_WICPixelFormat32bppBGRA,
-                                      WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom)))
+                                     WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom)))
         return false;
-    return SUCCEEDED(frame->WriteSource(converter.Get(), nullptr)) &&
-           SUCCEEDED(frame->Commit()) && SUCCEEDED(enc->Commit());
+    return SUCCEEDED(frame->WriteSource(converter.Get(), nullptr)) && SUCCEEDED(frame->Commit()) &&
+           SUCCEEDED(enc->Commit());
 }
 bool Renderer::initialize()
 {
@@ -277,90 +277,125 @@ HRESULT Renderer::drawTarget(ID2D1RenderTarget *t, float w, float h, const Snaps
     {
         t->PushAxisAlignedClip(D2D1::RectF(0, 0, w, h), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         t->SetTransform(D2D1::Matrix3x2F::Translation(0, -scroll));
-        const bool compact = w < 400 || h < 520;
-        float margin = compact ? 12.f : 16.f, row = compact ? 52.f : 68.f, gy = compact ? 54.f : 62.f,
-              gh = compact ? 38.f : 52.f;
-        float graphW = w - margin * 2 - 150, metricX = margin + graphW + 18, metricW = w - metricX - margin;
-        text(L"Performance", margin, 13, w - 130, 16, p.text, true);
+        const float margin = 16, usable = w - 2 * margin;
+        text(L"Performance", margin, 12, usable - 110, 18, p.text, true);
         text(s.paused ? L"Paused"
              : stale  ? L"Stale"
-             : locked ? L"Locked"
+             : locked ? L"Live · Locked"
                       : L"Move / resize",
-             w - 132, 18, 116, 11, p.muted, false, true);
-        static const wchar_t *names[] = {L"CPU", L"GPU", L"VRAM", L"RAM"};
-        for (int i = 0; i < 4; ++i)
+             w - 130, 17, 114, 10, p.muted, false, true);
+        text(L"CPU", margin, 47, 100, 14, p.text, true);
+        text(formatPercent(s.current[0], true), w - 130, 43, 114, 22, p.text, false, true);
+        text(s.cpuName.empty() ? L"Detecting CPU…" : s.cpuName, margin, 72, usable, 11, p.muted);
+        unsigned performance = 0, efficiency = 0;
+        for (auto &c : s.cores)
         {
-            float yy = gy + row * i;
-            graph(margin, yy, graphW, gh, i, false);
-            text(names[i], metricX, yy - 3, metricW, 12, p.text, true);
-            std::wstring value, caption;
-            if (i < 2)
+            performance += c.kind == L"Performance";
+            efficiency += c.kind == L"Efficiency";
+        }
+        auto summary = performance && efficiency ? std::to_wstring(performance) + L" performance + " +
+                                                       std::to_wstring(efficiency) + L" efficiency cores"
+                                                 : std::to_wstring(s.cores.size()) + L" physical cores";
+        text(summary, margin, 89, usable, 10, p.muted);
+        graph(margin, 110, usable, 43, 0, false);
+        text(L"60 seconds", margin, 155, 100, 9, p.muted);
+        text(L"0–100%", w - 90, 155, 74, 9, p.muted, false, true);
+        float y = 176;
+        std::wstring previous;
+        for (auto &core : s.cores)
+        {
+            if (core.kind != previous)
             {
-                value = formatPercent(s.current[i]);
-                caption = i == 0 ? L"All processors" : s.gpuName;
+                unsigned count = 0;
+                for (auto &c : s.cores)
+                    count += c.kind == core.kind;
+                text(core.kind + L" cores · " + std::to_wstring(count), margin, y, usable, 11, p.text, true);
+                y += 22;
+                previous = core.kind;
             }
+            line(margin, y, w - margin, y, p.border, .5f);
+            text(L"Core " + std::to_wstring(core.id), margin, y + 3, 68, 10.5f, p.text);
+            auto badge = core.kind == L"Performance" ? L"P" : core.kind == L"Efficiency" ? L"E" : L"";
+            text(badge, margin + 63, y + 3, 16, 10, p.series[0], true);
+            auto values = core.history.ordered();
+            float gx = margin + 83, gw = usable - 131, gy = y + 4, gh = 15;
+            auto ink = p.series[0];
+            if (core.kind == L"Efficiency")
+                ink = p.series[2];
+            for (int i = 1; i < 60; ++i)
+                if (valid(values[i - 1].values[0]) && valid(values[i].values[0]))
+                {
+                    auto py = [&](int n)
+                    { return gy + gh * (1 - float(std::clamp(values[n].values[0], 0.0, 100.0)) / 100.f); };
+                    line(gx + gw * (i - 1) / 59.f, py(i - 1), gx + gw * i / 59.f, py(i), ink, 1.1f);
+                }
+            text(formatPercent(core.current), w - margin - 44, y + 3, 44, 10.5f, p.text, false, true);
+            y += 24;
+        }
+        if (s.cores.empty())
+        {
+            text(L"Waiting for CPU topology…", margin, y, usable, 11, p.muted);
+            y += 24;
+        }
+        y += 14;
+        static const wchar_t *names[] = {L"CPU", L"GPU", L"VRAM", L"RAM"};
+        float cell = (usable - 16) / 3;
+        for (int metric = 1; metric < 4; ++metric)
+        {
+            float x = margin + (metric - 1) * (cell + 8);
+            text(names[metric], x, y, cell, 11, p.text, true);
+            std::wstring value;
+            if (metric == 1)
+                value = formatPercent(s.current[metric]);
             else
             {
-                double used = i == 2 ? s.vramUsed : s.ramUsed, total = i == 2 ? s.vramTotal : s.ramTotal;
-                if (i == 2 && total == 0)
+                double used = metric == 2 ? s.vramUsed : s.ramUsed,
+                       total = metric == 2 ? s.vramTotal : s.ramTotal;
+                if (valid(used) && valid(total) && total > 0)
                 {
-                    value = L"N/A";
-                    caption = L"Shared GPU";
+                    wchar_t b[96];
+                    swprintf_s(b, L"%.2f / %.2f GB", used / 1e9, total / 1e9);
+                    value = b;
                 }
                 else
-                {
-                    if (valid(used) && valid(total))
-                    {
-                        wchar_t b[80];
-                        swprintf_s(b, L"%.1f / %.0f GiB", used / 1073741824, total / 1073741824);
-                        value = b;
-                    }
-                    else
-                        value = L"—";
-                    caption = (i == 2 ? L"Dedicated · " : L"Physical · ") + formatPercent(s.current[i]);
-                }
+                    value = L"—";
             }
-            text(value, metricX, yy + (compact ? 11.f : 14.f), metricW,
-                 compact ? 16.f : (i < 2 ? 22.f : 17.f), p.text);
-            if (!compact)
-                text(caption, metricX, yy + 38, metricW, 10.5f, p.muted);
+            text(value, x, y + 18, cell, metric == 1 ? 14.f : 9.5f, p.text);
+            graph(x, y + 40, cell, 35, metric, false);
+            text(metric == 1   ? L"GPU load"
+                 : metric == 2 ? L"Dedicated memory"
+                               : L"System memory",
+                 x, y + 78, cell, 9, p.muted);
         }
-        float footer = gy + row * 3 + gh + 5;
-        text(L"60 seconds", margin, footer, 100, 10.5f, p.muted);
-        text(L"Now", margin + graphW - 40, footer, 40, 10.5f, p.muted, false, true);
-        text(L"Scale: 0–100%", w - 142, footer, 126, 10.5f, p.muted, false, true);
-        float divider = footer + 25, title = divider + 11, head = title + 27, first = head + 25,
-              rowH = compact ? 23.f : 26.f;
-        line(margin, divider, w - margin, divider, p.border, .65f);
-        text(L"Top applications", margin, title, 180, 13, p.text, true);
-        text(L"Resource pressure", w - 153, title + 2, 137, 10.5f, p.muted, false, true);
+        y += 107;
+        line(margin, y, w - margin, y, p.border, .6f);
+        text(L"Top applications", margin, y + 9, usable, 12, p.text, true);
+        float head = y + 34, first = head + 23;
         float end = w - margin;
-        std::array<float, 4> ends{end - (compact ? 165.f : 185.f), end - (compact ? 120.f : 132.f),
-                                  end - (compact ? 60.f : 65.f), end};
-        text(L"Application", margin, head, ends[0] - margin - 43, 10.5f, p.muted);
+        std::array<float, 4> ends{end - 181, end - 137, end - 69, end};
+        text(L"Application", margin, head, ends[0] - margin - 42, 10, p.muted);
         for (int i = 0; i < 4; ++i)
-            text(names[i], ends[i] - (i < 2 ? 43.f : 60.f), head, i < 2 ? 43.f : 60.f, 10.5f, p.muted, false,
+            text(names[i], ends[i] - (i < 2 ? 42.f : 67.f), head, i < 2 ? 42.f : 67.f, 10, p.muted, false,
                  true);
         for (size_t i = 0; i < s.apps.size() && i < 5; ++i)
         {
-            auto &a = s.apps[i];
-            float yy = first + rowH * float(i);
-            float nameW = ends[0] - margin - 50;
-            std::wstring label = a.name + (a.count > 1 ? L" (" + std::to_wstring(a.count) + L")" : L"");
-            text(label, margin, yy, nameW, 11, p.text);
-            std::array<std::wstring, 4> values{formatPercent(a.cpu, true), formatPercent(a.gpu, true),
-                                               formatBytes(a.vram, compact), formatBytes(a.ram, compact)};
+            const auto &a = s.apps[i];
+            float yy = first + 23 * float(i);
+            text(a.name + (a.count > 1 ? L" (" + std::to_wstring(a.count) + L")" : L""), margin, yy,
+                 ends[0] - margin - 46, 10.5f, p.text);
+            std::array<std::wstring, 4> vals{formatPercent(a.cpu, true), formatPercent(a.gpu, true),
+                                             formatBytes(a.vram), formatBytes(a.ram)};
             for (int j = 0; j < 4; ++j)
-                text(values[j], ends[j] - (j < 2 ? 46.f : 63.f), yy, j < 2 ? 46.f : 63.f, 11, p.text, false,
+                text(vals[j], ends[j] - (j < 2 ? 42.f : 67.f), yy, j < 2 ? 42.f : 67.f, 10, p.text, false,
                      true);
         }
         if (s.apps.empty())
-            text(s.updatedMs ? L"Waiting for application counters…" : L"Starting counters…", margin, first,
-                 w - margin * 2, 12, p.muted);
-        if (h < (compact ? 460 : 548))
-            text(L"Unlock to scroll", w - 133, std::max(h, 460.f) - 23, 117, 10.5f, p.muted, false, true);
+            text(L"Waiting for application counters…", margin, first, usable, 11, p.muted);
+        text(L"60 seconds · Updates every second", margin, first + 120, usable, 9, p.muted, false, true);
         t->SetTransform(D2D1::Matrix3x2F::Identity());
         t->PopAxisAlignedClip();
+        if (panelContentHeight(s.cores) > h && !locked)
+            text(L"Scroll for more", w - 105, h - 19, 89, 9, p.muted, false, true);
     }
     return t->EndDraw();
 }
@@ -369,6 +404,15 @@ std::wstring Renderer::accessibleText(const Snapshot &s, bool strip) const
     std::wstring text = std::wstring(s.paused ? L"Paused. " : L"") + L"CPU " + formatPercent(s.current[0]) +
                         L"; GPU " + formatPercent(s.current[1]) + L"; dedicated VRAM " +
                         formatBytes(s.vramUsed) + L"; RAM " + formatBytes(s.ramUsed) + L".";
+    if (!strip)
+    {
+        text += L"\n" + s.cpuName + L"; " + std::to_wstring(s.cores.size()) + L" cores; sampled " +
+                std::to_wstring(s.updatedMs) + L".";
+        for (auto &c : s.cores)
+            text += L"\nCore " + std::to_wstring(c.id) + L" " + c.kind + L", " +
+                    formatPercent(c.current, true) + L"; history samples " +
+                    std::to_wstring(c.history.size()) + L".";
+    }
     if (!strip)
         for (auto &a : s.apps)
             text += L"\n" + a.name + L", " + std::to_wstring(a.count) + L" processes, CPU " +
@@ -380,10 +424,28 @@ Snapshot demonstrationSnapshot()
 {
     Snapshot s;
     s.updatedMs = GetTickCount64();
-    s.gpuName = L"GPU 0 · Discrete";
-    s.ramTotal = 32. * 1073741824;
+    s.gpuName = L"NVIDIA GeForce RTX 5070 Ti";
+    s.cpuName = L"Intel Core Ultra 5 245KF";
+    for (unsigned id : {0U, 1U, 10U, 11U, 12U, 13U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U})
+    {
+        CpuCore c;
+        c.id = id;
+        c.kind = (id < 2 || id >= 10) ? L"Performance" : L"Efficiency";
+        c.efficiencyClass = c.kind == L"Performance" ? 1 : 0;
+        c.logical = {{0, id}};
+        for (int j = 0; j < 60; ++j)
+        {
+            double v = id == 3   ? 75 + 9 * sin(j * .16)
+                       : id == 8 ? 60 + 8 * sin(j * .13)
+                                 : 4 + 2 * sin(j * .4 + id);
+            c.current = v;
+            c.history.push(int64_t(s.updatedMs / 1000) - 59 + j, {v, missing, missing, missing});
+        }
+        s.cores.push_back(std::move(c));
+    }
+    s.ramTotal = 34030211072.;
     s.ramUsed = 12.8 * 1073741824;
-    s.vramTotal = 8. * 1073741824;
+    s.vramTotal = 16772022272.;
     s.vramUsed = 3.4 * 1073741824;
     for (int i = 0; i < 60; ++i)
     {
