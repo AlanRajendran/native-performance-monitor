@@ -2,13 +2,17 @@
 param(
     [switch]$Yes,
     [string]$DataDirectory,
-    [switch]$Isolated
+    [switch]$Isolated,
+    [string]$PackageDirectory,
+    [int]$ParentPid,
+    [switch]$Quiet,
+    [string]$ResultFile
 )
 
 $ErrorActionPreference = 'Stop'
-$ownerId = 'NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2'
-$packageDirectory = [IO.Path]::GetFullPath($PSScriptRoot)
-$defaultData = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'NativePerfMonitor'
+$ownerId = 'NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.2'
+$packageDirectory = [IO.Path]::GetFullPath($PackageDirectory)
+$defaultData = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'NativePerfMonitor-1.2'
 if (-not $DataDirectory) { $DataDirectory = $defaultData }
 $DataDirectory = [IO.Path]::GetFullPath($DataDirectory)
 
@@ -40,21 +44,31 @@ function Assert-OwnedFile([string]$Directory, [string]$Name) {
     return $candidate
 }
 
+function Finish-Removal([bool]$Success, [string]$Message) {
+    if ($ResultFile -and $Isolated) {
+        Assert-NoReparsePoint $ResultFile
+        @{ success=$Success; message=$Message } | ConvertTo-Json | Set-Content -LiteralPath $ResultFile -Encoding UTF8
+    }
+    if (-not $Quiet) {
+        Add-Type -AssemblyName System.Windows.Forms
+        $icon = if ($Success) { [Windows.Forms.MessageBoxIcon]::Information } else { [Windows.Forms.MessageBoxIcon]::Error }
+        [Windows.Forms.MessageBox]::Show($Message, 'Uninstall Native Performance Monitor 1.2', [Windows.Forms.MessageBoxButtons]::OK, $icon) | Out-Null
+    }
+}
 try {
     Assert-NoReparsePoint $packageDirectory
     Assert-NoReparsePoint $DataDirectory
     if (-not $Isolated -and -not $DataDirectory.Equals($defaultData, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'A custom settings directory requires the explicit -Isolated option.'
     }
-    $marker = Assert-OwnedFile $packageDirectory '.nativeperf-package'
+    $marker = Assert-OwnedFile $packageDirectory 'package-manifest.json'
     if (-not (Test-Path -LiteralPath $marker) -or
-        (Get-Content -LiteralPath $marker -Raw).Trim() -ne $ownerId) {
+        (Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json).owner -ne $ownerId) {
         throw 'The portable package ownership marker is missing or invalid. Nothing was removed.'
     }
 
     # Validate every prospective file before stopping a process or changing anything.
-    $packageNames = @('PerfMonitor.exe', 'README.md', 'LICENSE.txt', 'SHA256SUMS.txt',
-        'Uninstall.cmd', 'Uninstall.ps1', '.nativeperf-package')
+    $packageNames = @('PerfMonitor.exe', 'Uninstall.exe', 'ReadMe.txt', 'LICENSE.txt', 'SHA256SUMS.txt', 'package-manifest.json')
     $packageFiles = @($packageNames | ForEach-Object { Assert-OwnedFile $packageDirectory $_ })
     $dataNames = @('settings.ini', 'settings.ini.new', 'diagnostics.txt', '.nativeperf-settings')
     $dataFiles = @()
@@ -70,9 +84,13 @@ try {
     $executable = Join-Path $packageDirectory 'PerfMonitor.exe'
     if (Test-Path -LiteralPath $executable) {
         $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($executable)
-        if ($version.OriginalFilename -ne 'PerfMonitor.exe' -or $version.ProductName -ne 'NativePerfMonitor') {
+        if ($version.FileVersion -ne '1.2.0' -or $version.OriginalFilename -ne 'PerfMonitor.exe' -or $version.ProductName -ne 'NativePerfMonitor') {
             throw 'The executable does not identify itself as NativePerfMonitor. Nothing was removed.'
         }
+    }
+    if ($ParentPid -gt 0) {
+        $launcher = Get-Process -Id $ParentPid -ErrorAction SilentlyContinue
+        if ($launcher -and -not $launcher.WaitForExit(15000)) { throw 'Uninstaller launcher did not exit.' }
     }
     if (-not $Yes) {
         Write-Host "Remove Performance monitor from $packageDirectory and its application settings?"
@@ -103,9 +121,9 @@ try {
         if ($key) {
             try {
                 $expected = '"' + $executable + '" --autostart'
-                $actual = [string]$key.GetValue('NativePerfMonitor', '')
+                $actual = [string]$key.GetValue('NativePerfMonitor-1.2', '')
                 if ($actual.Equals($expected, [StringComparison]::OrdinalIgnoreCase)) {
-                    $key.DeleteValue('NativePerfMonitor', $false)
+                    $key.DeleteValue('NativePerfMonitor-1.2', $false)
                 }
             }
             finally { $key.Dispose() }
@@ -128,10 +146,10 @@ try {
             Remove-Item -LiteralPath $directory -Force
         }
     }
-    Write-Host 'Performance monitor removed. Unrelated files were kept.'
+    Finish-Removal $true 'Native Performance Monitor 1.2 removed. Unrelated files and version 1.1 were kept.'
     exit 0
 }
 catch {
-    Write-Error $_
+    Finish-Removal $false ("Removal did not complete: " + $_.Exception.Message)
     exit 1
 }
