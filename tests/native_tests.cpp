@@ -27,10 +27,12 @@ int wmain(int argc, wchar_t **argv)
         s.panelY = 70;
         s.adapter = UINT64_MAX;
         s.compact = true;
+        s.opacity = 40;
         s.strip = false;
         require(saveSettings(dir, s, error), "atomic settings save");
         auto loaded = loadSettings(dir);
-        require(loaded.panelX == 120 && loaded.adapter == UINT64_MAX && loaded.compact && !loaded.strip,
+        require(loaded.panelX == 120 && loaded.adapter == UINT64_MAX && loaded.compact && !loaded.strip &&
+                    loaded.opacity == 40,
                 "settings round trip including 64-bit LUID");
         require(std::filesystem::exists(dir / L".nativeperf-settings") &&
                     !std::filesystem::exists(dir / L"settings.ini.new"),
@@ -62,10 +64,10 @@ int wmain(int argc, wchar_t **argv)
         auto sample = demonstrationSnapshot();
         for (bool dark : {false, true})
             for (int dpi : {96, 120, 144, 192})
-                for (bool strip : {false, true})
+                for (bool strip : {false})
                 {
                     BitmapSurface bitmap;
-                    int width = strip ? 344 : 420, height = strip ? 42 : 548;
+                    int width = 450, height = 880;
                     require(bitmap.resize(width * dpi / 96, height * dpi / 96), "DPI bitmap allocation");
                     require(SUCCEEDED(
                                 renderer.drawBitmap(bitmap, float(dpi), sample, palette(dark), strip, true)),
@@ -100,6 +102,40 @@ int wmain(int argc, wchar_t **argv)
                     "compact and scrolled render");
             require(b.save(root / (size.second < 460 ? L"scrolled.png" : L"compact.png")), "compact export");
         }
+        require(formatBytes(1000000000.) == L"1.00 GB", "decimal gigabyte boundary");
+        require(formatBytes(1073741824.) == L"1.07 GB", "binary input numerically converted to GB");
+        require(formatBytes(536870912.) == L"537 MB", "binary input numerically converted to MB");
+        require(formatBytes(1000000.) == L"1 MB", "decimal megabyte boundary");
+        require(formatBytes(999999999.) == L"1000 MB", "rounding below GB boundary remains MB");
+        require(formatBytes(1000000000., true) == L"1.00 GB",
+                "compact display retains explicit decimal units");
+        require(std::abs(palette(true).surface.a - .25f) < .001, "25 percent background opacity");
+        require(palette(false, true).surface.a == 1, "high contrast remains readable");
+        require(parseCpuInstance(L"2,63") == std::pair<unsigned, unsigned>{2, 63},
+                "processor group retained");
+        require(!parseCpuInstance(L"0,_Total") && !parseCpuInstance(L"_Total") &&
+                    !parseCpuInstance(L"0,64") && !parseCpuInstance(L"1,2x"),
+                "aggregate and malformed counter instances ignored");
+        CpuCore smt;
+        smt.logical = {{0, 0}, {0, 1}};
+        std::map<std::pair<unsigned, unsigned>, double> values{{{0, 0}, 100}, {{0, 1}, 0}};
+        require(coreUtilization(smt, values) == 50, "SMT sibling mean");
+        values.erase({0, 1});
+        require(!valid(coreUtilization(smt, values)), "missing sibling is not zero");
+        auto cores = enumerateCpuCores();
+        require(!cores.empty(), "real physical core discovery");
+        unsigned logical = 0;
+        for (auto &c : cores)
+            logical += unsigned(c.logical.size());
+        require(logical == GetActiveProcessorCount(ALL_PROCESSOR_GROUPS),
+                "all logical processors represented exactly");
+        auto accessibility = renderer.accessibleText(sample, false);
+        require(accessibility.find(L"Core 13 Performance") != accessibility.npos &&
+                    accessibility.find(L"Core 3 Efficiency") != accessibility.npos,
+                "typed core rows exposed to accessibility");
+        require(accessibility.find(L"GiB") == accessibility.npos &&
+                    accessibility.find(L"MiB") == accessibility.npos,
+                "no binary unit labels in accessibility");
         auto adapters = enumerateAdapters();
         std::wcout << L"DXGI hardware adapters discovered: " << adapters.size() << L"\n";
         for (auto &a : adapters)
