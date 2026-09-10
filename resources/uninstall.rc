@@ -1,5 +1,6 @@
 #include <windows.h>
-1 ICON "app.ico"
+101 RCDATA "../packaging/Uninstall.ps1"
+1 ICON "uninstall.ico"
 1 VERSIONINFO
  FILEVERSION 1,2,0,0
  PRODUCTVERSION 1,2,0,0
@@ -13,10 +14,10 @@ BEGIN
   BLOCK "040904B0"
   BEGIN
    VALUE "CompanyName", "NativePerfMonitor Project"
-   VALUE "FileDescription", "Native Windows Performance Monitor"
+   VALUE "FileDescription", "Uninstall Native Performance Monitor 1.2"
    VALUE "FileVersion", "1.2.0"
-   VALUE "InternalName", "PerfMonitor"
-   VALUE "OriginalFilename", "PerfMonitor.exe"
+   VALUE "InternalName", "Uninstall"
+   VALUE "OriginalFilename", "Uninstall.exe"
    VALUE "ProductName", "NativePerfMonitor"
    VALUE "ProductVersion", "1.2.0"
   END
