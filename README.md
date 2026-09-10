@@ -1,72 +1,51 @@
-# Native Performance Monitor 1.1.0
+# Native Performance Monitor 1.2.0
 
-A portable native Windows 11 x64 monitor: one executable, two surfaces, one notification-area menu. It uses Win32, Direct2D/DirectWrite, DWM, DXGI, and Windows performance counters. It has no browser runtime, service, kernel driver, telemetry, or companion monitoring process.
+A portable Windows 11 x64 application with one native monitoring process and one translucent desktop panel. Built with Win32, Direct2D/DirectWrite, DWM, DXGI and user-mode Windows performance counters. No browser runtime, Explorer injection, service, kernel driver or companion monitor.
 
-## Run
+## Run and control
 
-Extract the complete portable ZIP into a writable folder, then open `PerfMonitor.exe`. No installer, administrator privileges, .NET runtime, or additional runtime download is required. The application is an unsigned local build.
+Extract the portable ZIP and open **PerfMonitor.exe**, directly in its main folder. **Uninstall.exe** is beside it. Keep all six package files together. This is an unsigned build with a static C++ runtime; no additional runtime download or administrator access is required.
 
-The desktop panel starts at the upper-right of the primary monitor. The smaller strip sits **inside a free section of the visible taskbar**, between existing controls. Both start locked and pass clicks to the window or desktop underneath. Use the notification-area icon (possibly inside the overflow menu) for all controls. Double-clicking the executable again restores the existing panel without launching a second collector.
+The panel starts on the primary monitor behind normal application windows. It starts locked and click-through. Use its notification-area menu (possibly in the overflow) to unlock, move, resize, scroll, show/hide, choose GPU, pause, change opacity, enable optional startup, uninstall or exit. Launching this version again restores its existing instance. There is no taskbar widget in this version. Collection continues while covered or hidden, unless explicitly paused.
 
-The menu controls surface visibility, locking, moving/resizing, resetting positions, GPU selection, default/compact size, pause, autostart, diagnostics, uninstall, and exit. Unlock to move or resize the panel; a short screen supports scrolling its contents while unlocked. The strip can be moved horizontally and snaps to the nearest available taskbar space. Clear **Inside taskbar** to place it immediately above the bar. Settings follow the primary monitor when display geometry changes. The strip hides for primary-monitor full-screen applications and an auto-hidden taskbar.
-
-Both monitoring surfaces have translucent backgrounds while locked and unlocked: 62% surface opacity, with crisp text and graph lines. Windows app light/dark mode controls the panel; in a mixed Windows theme the strip follows the shell color mode. High contrast uses opaque system colors for legibility. This revision replaces the earlier solid/Mica modes with per-pixel alpha compositing so the backgrounds remain visibly translucent in either lock state. Windows theme, transparency, and taskbar settings are not changed.
-
-The strip is a separate top-level window, not an Explorer plug-in. Read-only UI Automation discovers taskbar controls on a background thread; it never invokes them. It refreshes at most once per second during shell changes and every five seconds at idle. The overlay is normally 344 × 42 DIP, reducing to 280 DIP wide if needed. If no safe gap exists, or Explorer's controls cannot be read, it hides instead of covering buttons. The tray menu can always switch it back above the taskbar. Transient taskbar changes can take up to five seconds to be reflected.
+Background opacity defaults to 25%, with 15% and 40% alternatives. Text and graph traces remain crisp. Per-pixel alpha composition follows Windows app light/dark mode; high contrast uses opaque system colors. No Windows appearance setting is modified.
 
 ## Readings
 
-Graphs cover 60 seconds and sample once per second. The application table refreshes every two seconds. CPU measures busy time across all logical processors, so it can differ from Task Manager's frequency-adjusted CPU display. GPU is the busiest engine on the selected adapter. VRAM is dedicated memory on that same adapter; shared system memory is not mislabeled as VRAM. Choose the adapter from the tray menu.
+CPU total, physical cores, GPU, dedicated VRAM and RAM retain 60 one-second samples. Top applications refresh every two seconds. Physical-core rows average their logical processors; all siblings must have valid samples. Windows processor topology supplies core identifiers and efficiency classes. Two classes appear as performance and efficiency groups; homogeneous processors use generic CPU labels, and additional classes retain explicit class numbers rather than guessed marketing names. Core IDs need not be consecutive inside a group.
 
-Processes are grouped by normalized full executable path. The process count follows each name. Identically named files in different directories and different helper executables remain separate groups. Core Windows processes are excluded from the table, while system graphs include the whole machine. Table RAM is private resident working set. GPU memory is process-attributed and can count shared allocations more than once, so table values need not sum to the adapter graph.
+CPU is busy time and may differ from Task Manager's frequency-adjusted metric. GPU is the busiest engine on the selected adapter. VRAM is dedicated memory on that adapter. Decimal **GB = 1,000,000,000 bytes** and **MB = 1,000,000 bytes** are calculated from byte counters, not relabeled binary values.
 
-The five rows are ordered by the largest of four shares: CPU percentage, GPU percentage, attributed VRAM / dedicated capacity, and private RAM / physical capacity. This is a resource-share heuristic, not a measurement of stalls or eviction. Unavailable values use a dash. Gaps represent unavailable samples or paused/suspended time. Protected identities are omitted rather than guessed. An integrated GPU with no dedicated capacity reports VRAM as unavailable. Linked physical GPU nodes beyond node zero are explicitly unsupported in this release.
+The five top applications are grouped by normalized full executable path. Base Windows processes are excluded from ranking but included in system totals. Ranking uses the maximum CPU, GPU, dedicated-memory and physical-memory resource share. This is a usage heuristic, not a stall measurement. Table RAM is private resident working set. Process GPU memory can count shared allocations more than once. Missing counters show dashes and history gaps; integrated GPUs without dedicated capacity show unavailable VRAM. Linked GPU nodes beyond node zero are unsupported.
 
-The About / diagnostics menu explains the active adapter and counter status. The two windows expose their current metrics and all application-column values through a read-only UI Automation value.
+## Settings and removal
 
-## Autostart and settings
+Preferences are isolated in `%LOCALAPPDATA%\NativePerfMonitor-1.2`. Optional autostart uses the current user's Run value `NativePerfMonitor-1.2` and is off by default. Disable it before moving the folder and re-enable from the new location. Windows startup policy may override registration.
 
-Autostart is off by default. Enable **Start with Windows** in the tray menu to register only this executable in the current user's `Run` key. Windows Startup settings and organizational policy can override registration. Disable autostart before moving the executable; enable it again from the new location. The registration has Windows' 260-character command-length limit.
+Version 1.1 files, settings and startup registration remain untouched. Exit the older version before running this one to keep only one collector active.
 
-Preferences are stored in `%LOCALAPPDATA%\NativePerfMonitor`. No measurement history is stored unless an explicit benchmark report is requested. No Windows appearance, taskbar, security, driver, or power setting is changed.
+Open **Uninstall.exe**, or choose Uninstall in the tray menu. Confirmation is required. It stops only the verified package monitor, removes matching startup registration and owned settings, deletes the six owned package files including both EXEs, and removes empty directories. Unrelated files, downloaded archives and source remain. Invalid ownership markers and redirected paths are rejected.
 
-## Uninstall completely
+The native uninstall launcher contains an embedded cleanup script. After confirmation it briefly starts Windows' built-in PowerShell to delete both EXEs, then exits. No script file or persistent helper is installed; system execution policy is unchanged. The monitoring application itself does not use PowerShell.
 
-Choose **Uninstall…** from the tray menu, or run `Uninstall.cmd` in the extracted package. The standalone uninstaller asks you to type `YES`. It stops the verified package process, removes its matching optional startup registration and application-owned settings, deletes the package files and uninstaller, and removes directories only if empty. Unrelated files are preserved. It refuses invalid ownership markers and redirected/reparse-point paths.
+## Build and tests
 
-The brief PowerShell removal process runs only when uninstalling; it is not a monitoring dependency. Its execution-policy option applies only to that process and does not change Windows execution policy. Windows-managed execution history and separately downloaded ZIP/source archives are outside application-owned cleanup.
-
-## Build and test from source
-
-Requirements: Visual Studio 2022 with Desktop development with C++, a Windows 11 SDK, and CMake 3.24 or newer. The validated compiler is MSVC 19.44 with SDK 10.0.26100.0. No NuGet, npm, or third-party monitoring libraries are required.
+Requires Visual Studio 2022 Desktop development with C++, Windows 11 SDK and CMake 3.24+. Validated with MSVC 19.44 and SDK 10.0.26100.0. No third-party monitoring libraries or package downloads.
 
 ```powershell
 .\Build.ps1
+.\CreatePackage.ps1
 ```
 
-The script builds x64 Release, runs CTest, and runs the uninstaller fixture tests. `CoreTests` tests calculations, grouping, and safe taskbar gap selection; `NativeTests` tests settings, removal boundaries, translucent premultiplied rendering at 100%, 125%, 150%, and 200% DPI; `WindowTests` launches an isolated test instance on the interactive Explorer desktop and tests placement, actual taskbar control avoidance, cross-process hit testing, translucency while unlocked, pause/resume, compact sizing, single-instance behavior, and shutdown. Close a running monitor before running the window test. A desktop without Explorer returns a CTest skip, not a fabricated pass.
-
-To run just the uninstaller fixture tests:
+The build runs CoreTests, NativeTests, WindowTests and uninstall fixtures. Window tests need an interactive Explorer desktop; an unavailable desktop is reported as skipped. Close version 1.2 before testing. Tests cover calculations, topology, sibling aggregation, decimal units, settings, rendering at 100/125/150/200% DPI, live cores, background collection, opacity, click-through, single-instance behavior, uninstall cancellation and guarded removal. See `docs/validation-1.2.0.md` for measured results and limitations. Older validation documents describe their named historical versions only.
 
 ```powershell
-.\tests\Test-Uninstaller.ps1 -Executable .\build\Release\PerfMonitor.exe -TestRoot .\build\uninstall-tests
-```
-
-After a successful Release build, `.\CreatePackage.ps1` creates the portable ZIP with the uninstaller, ownership marker, and SHA-256 checksums. The source archive contains all code, resources, and tests needed to rebuild it.
-
-Developer-only commands:
-
-```powershell
-# Isolated preferences; autostart is disabled in this mode.
+# Isolated preferences; autostart disabled in this mode.
 .\PerfMonitor.exe --data-dir "C:\path\to\test-settings"
-
-# Two-minute warm-up, ten-minute measurement, then automatic exit.
-.\PerfMonitor.exe --data-dir "C:\path\to\test-settings" --benchmark 600 --warmup 120 --report "C:\path\to\results.csv"
-
-# Render deterministic illustrative data using the actual Direct2D renderer.
+# Warm up, measure, and exit automatically.
+.\PerfMonitor.exe --data-dir "C:\path\to\test-settings" --benchmark 180 --warmup 30 --report "C:\path\to\results.csv"
+# Illustrative data rendered by the actual native renderer.
 .\PerfMonitor.exe --render-preview "C:\path\to\native-renders"
 ```
 
-`--demo` and `--theme light|dark` support isolated visual testing without changing Windows settings. Normal operation uses live data and follows Windows. `--exit` requests the current instance to stop. Build/test executables are development tools and are not included in the portable runtime package.
-
-Performance targets are below 0.5% average whole-machine CPU and around 50 MB working set. Consult the delivered validation report for actual measurements, hardware, and test limitations; these are not guaranteed bounds across every process count, DPI, driver, or Windows build.
+Performance targets are below 0.5% average whole-machine CPU and approximately 50 MB working set. Measurements are machine- and workload-dependent; they are not universal bounds.
