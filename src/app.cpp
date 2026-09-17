@@ -1,4 +1,5 @@
 #include "collector.h"
+#include "install.h"
 #include "render.h"
 #include "settings.h"
 #include "taskbar.h"
@@ -19,8 +20,8 @@ using namespace perf;
 using Microsoft::WRL::ComPtr;
 namespace
 {
-constexpr wchar_t controlClass[] = L"NativePerfMonitor.Controller.1.3";
-constexpr wchar_t surfaceClass[] = L"NativePerfMonitor.Surface.1.3";
+constexpr wchar_t controlClass[] = L"NativePerfMonitor.Controller.1.4";
+constexpr wchar_t surfaceClass[] = L"NativePerfMonitor.Surface.1.4";
 constexpr UINT sampleMessage = WM_APP + 1, themeMessage = WM_APP + 2, geometryMessage = WM_APP + 3,
                restoreMessage = WM_APP + 4, taskbarLayoutMessage = WM_APP + 5;
 enum Command : UINT
@@ -349,8 +350,8 @@ class Application
     }
     bool initialize()
     {
-        stopMessage = RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.3");
-        singleton = CreateMutexW(nullptr, FALSE, L"Local\\NativePerfMonitor.6D845648.v1.3");
+        stopMessage = RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.4");
+        singleton = CreateMutexW(nullptr, FALSE, L"Local\\NativePerfMonitor.6D845648.v1.4");
         if (GetLastError() == ERROR_ALREADY_EXISTS)
         {
             auto existing = FindWindowW(controlClass, nullptr);
@@ -591,17 +592,17 @@ class Application
                r.bottom >= m.rcMonitor.bottom &&
                (!(GetWindowLongPtrW(fg, GWL_STYLE) & WS_CAPTION) || !IsZoomed(fg));
     }
-    // Forgets what the shell was last told, so the next pass reapplies
-    // everything. Called for the events that genuinely invalidate placement --
-    // Explorer restarting, a display change, a DPI change, a lock change --
-    // rather than re-asserting z-order on a timer, which is what made the
-    // surfaces fight the shell for position.
     // Walking Explorer's accessibility tree only earns its cost while the strip
     // is actually being fitted into the taskbar.
     void syncObserver()
     {
         taskbarObserver.enable(settings.strip && settings.insideTaskbar);
     }
+    // Forgets what the shell was last told, so the next pass reapplies
+    // everything. Called for the events that genuinely invalidate placement --
+    // Explorer restarting, a display change, a DPI change, a lock change --
+    // rather than re-asserting z-order on a timer, which is what made the
+    // surfaces fight the shell for position.
     void invalidatePlacement()
     {
         for (auto s : {&panel, &strip})
@@ -781,14 +782,19 @@ class Application
     // limited, so a busy taskbar cannot translate into a twitching strip.
     Rect settleStrip(Rect wanted)
     {
-        if (!strip.appliedValid || stripInside != stripPlacedInside || wanted.w != strip.applied.w ||
-            wanted.h != strip.applied.h || wanted.y != strip.applied.y)
+        // Moving between the taskbar and the space above it, or following the
+        // bar to a different edge, is structural: apply it immediately.
+        if (!strip.appliedValid || stripInside != stripPlacedInside || wanted.y != strip.applied.y ||
+            wanted.h != strip.applied.h)
             return wanted;
-        const int drift = std::abs(wanted.x - strip.applied.x);
+        // Within one placement, both the position and the width can change as
+        // gaps open and close -- the narrower fallback slot is a width change.
+        // Both are damped, or the strip would twitch between two slot sizes.
+        const int drift = std::abs(wanted.x - strip.applied.x) + std::abs(wanted.w - strip.applied.w);
         if (!drift)
             return wanted;
         const auto now = GetTickCount64();
-        if (drift < stripDeadband || now - stripMovedMs < stripSettleMs)
+        if (drift < stripDeadband || (stripMovedMs && now - stripMovedMs < stripSettleMs))
             return strip.applied;
         stripMovedMs = now;
         return wanted;
@@ -971,7 +977,7 @@ class Application
     std::wstring diagnostics()
     {
         auto text =
-            L"Native Performance Monitor 1.4.0\n\n" +
+            std::wstring(L"Native Performance Monitor ") + displayVersion + L"\n\n" +
             renderer.accessibleText(snapshot, false, settings.range) + L"\n\nAdapter: " + snapshot.gpuName +
             L"\nCollection: 1 second; application ranking: 2 seconds.\nHistory range: " +
             (settings.range == Range::Minutes ? L"60 minutes (one-minute averages)." : L"60 seconds.") +
@@ -1234,7 +1240,7 @@ class Application
         WNDCLASSEXW c{sizeof(c)};
         c.hInstance = instance;
         c.lpfnWndProc = opacityProc;
-        c.lpszClassName = L"NativePerfMonitor.Opacity.1.3";
+        c.lpszClassName = L"NativePerfMonitor.Opacity.1.4";
         c.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         RegisterClassExW(&c);
         auto area = primaryInfo().rcWork;
@@ -1475,7 +1481,8 @@ class Application
                 auto summary = options.report;
                 summary.replace_extension(L"summary.txt");
                 std::ofstream f(summary);
-                f << "NativePerfMonitor 1.3.0\nMeasured seconds: " << double(now - measurementStartMs) / 1000
+                f << "NativePerfMonitor " << displayVersionNarrow
+                  << "\nMeasured seconds: " << double(now - measurementStartMs) / 1000
                   << "\nWarm-up seconds: " << options.warmup << "\nSamples: " << benchmarkRows
                   << "\nLogical processors: " << GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)
                   << "\nAverage machine CPU percent: " << total << "\nSingle-core equivalent percent: "
@@ -1807,7 +1814,7 @@ int WINAPI wWinMain(HINSTANCE h, HINSTANCE, PWSTR, int)
     {
         auto existing = FindWindowW(controlClass, nullptr);
         if (existing)
-            PostMessageW(existing, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.3"), 0, 0);
+            PostMessageW(existing, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.4"), 0, 0);
         if (options.prepare)
         {
             std::wstring error;

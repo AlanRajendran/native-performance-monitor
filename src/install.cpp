@@ -20,9 +20,9 @@ static std::filesystem::path known(REFKNOWNFOLDERID id)
 }
 InstallPaths userInstallPaths()
 {
-    return {known(FOLDERID_LocalAppData) / L"Programs" / L"NativePerfMonitor-1.3", known(FOLDERID_Desktop),
+    return {known(FOLDERID_LocalAppData) / L"Programs" / L"NativePerfMonitor-1.4", known(FOLDERID_Desktop),
             known(FOLDERID_Programs),
-            L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NativePerfMonitor-1.3"};
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NativePerfMonitor-1.4"};
 }
 std::filesystem::path shortcutTarget(const std::filesystem::path &shortcut)
 {
@@ -78,8 +78,8 @@ bool installPackage(const std::filesystem::path &source, const InstallPaths &pat
                 throw std::runtime_error("A redirected installation path was refused");
         std::ifstream marker(source / L"package-manifest.json");
         std::string content((std::istreambuf_iterator<char>(marker)), {});
-        if (content.find("NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.3") == std::string::npos)
-            throw std::runtime_error("Extract the complete version 1.3 package before installing");
+        if (content.find("NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.4") == std::string::npos)
+            throw std::runtime_error("Extract the complete version 1.4 package before installing");
         for (auto &name : names)
         {
             auto file = source / name;
@@ -87,9 +87,9 @@ bool installPackage(const std::filesystem::path &source, const InstallPaths &pat
                 throw std::runtime_error("A required package file is missing or redirected");
         }
         auto target = paths.destination / L"PerfMonitor.exe";
-        std::vector<std::filesystem::path> shortcuts = {paths.desktop / L"Native Performance Monitor 1.3.lnk",
+        std::vector<std::filesystem::path> shortcuts = {paths.desktop / L"Native Performance Monitor 1.4.lnk",
                                                         paths.programs /
-                                                            L"Native Performance Monitor 1.3.lnk"};
+                                                            L"Native Performance Monitor 1.4.lnk"};
         for (auto &path : shortcuts)
         {
             if (hasReparseAncestor(path))
@@ -115,7 +115,7 @@ bool installPackage(const std::filesystem::path &source, const InstallPaths &pat
                 for (auto &name : names)
                     if (std::filesystem::exists(paths.destination / name))
                         throw std::runtime_error(
-                            "Version 1.3 is already installed here. Remove that copy before reinstalling");
+                            "Version 1.4 is already installed here. Remove that copy before reinstalling");
             }
         }
         else
@@ -155,8 +155,8 @@ bool installPackage(const std::filesystem::path &source, const InstallPaths &pat
             throw std::runtime_error("Could not register the application in Installed Apps");
         createdKey = disposition == REG_CREATED_NEW_KEY;
         set(key, L"OwnerId", applicationId);
-        set(key, L"DisplayName", L"Native Performance Monitor 1.3");
-        set(key, L"DisplayVersion", L"1.3.0");
+        set(key, L"DisplayName", L"Native Performance Monitor 1.4");
+        set(key, L"DisplayVersion", displayVersion);
         set(key, L"Publisher", L"NativePerfMonitor Project");
         set(key, L"InstallLocation", paths.destination.wstring());
         set(key, L"UninstallString", L"\"" + (paths.destination / L"Uninstall.exe").wstring() + L"\"");

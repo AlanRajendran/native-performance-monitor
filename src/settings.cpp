@@ -22,7 +22,7 @@ std::filesystem::path defaultDataDirectory()
         out = p;
         CoTaskMemFree(p);
     }
-    return out / L"NativePerfMonitor-1.3";
+    return out / L"NativePerfMonitor-1.4";
 }
 bool hasReparseAncestor(const std::filesystem::path &value)
 {
@@ -50,7 +50,7 @@ static bool ownedData(const std::filesystem::path &dir)
     std::ifstream f(marker);
     std::string s;
     std::getline(f, s);
-    return s == "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.3";
+    return s == "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.4";
 }
 Settings loadSettings(const std::filesystem::path &dir)
 {
@@ -141,7 +141,7 @@ bool saveSettings(const std::filesystem::path &dir, const Settings &s, std::wstr
     if (!std::filesystem::exists(marker))
     {
         std::ofstream f(marker);
-        f << "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.3\n";
+        f << "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.4\n";
         if (!f)
         {
             error = L"Cannot write settings marker.";
@@ -188,7 +188,7 @@ static std::wstring readStartup()
 {
     wchar_t value[2048]{};
     DWORD bytes = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER, runKey, L"NativePerfMonitor-1.3", RRF_RT_REG_SZ, nullptr, value,
+    if (RegGetValueW(HKEY_CURRENT_USER, runKey, L"NativePerfMonitor-1.4", RRF_RT_REG_SZ, nullptr, value,
                      &bytes) != ERROR_SUCCESS)
         return {};
     return value;
@@ -219,10 +219,10 @@ bool setStartup(const std::filesystem::path &exe, bool enabled, std::wstring &er
         RegCreateKeyExW(HKEY_CURRENT_USER, runKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
     if (st == ERROR_SUCCESS)
     {
-        st = enabled ? RegSetValueExW(key, L"NativePerfMonitor-1.3", 0, REG_SZ,
+        st = enabled ? RegSetValueExW(key, L"NativePerfMonitor-1.4", 0, REG_SZ,
                                       reinterpret_cast<const BYTE *>(expected.c_str()),
                                       DWORD((expected.size() + 1) * sizeof(wchar_t)))
-                     : RegDeleteValueW(key, L"NativePerfMonitor-1.3");
+                     : RegDeleteValueW(key, L"NativePerfMonitor-1.4");
         RegCloseKey(key);
     }
     if (st != ERROR_SUCCESS && st != ERROR_FILE_NOT_FOUND)

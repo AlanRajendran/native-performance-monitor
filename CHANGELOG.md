@@ -2,9 +2,12 @@
 
 ## 1.4.0
 
-Upgrades an existing 1.3 installation in place. Settings, the install location
-and the Installed Apps registration are unchanged, so nothing needs removing
-first and no setting is lost.
+Installs alongside 1.3 rather than upgrading it, as every previous release in
+this project has done. 1.4 has its own install folder, settings directory,
+shortcuts, startup entry and Installed Apps registration, so the two cannot
+interfere with each other and either can be removed independently. Settings do
+not carry over; remove 1.3 from Windows Installed apps once 1.4 is set up the
+way you want it.
 
 ### Stability
 

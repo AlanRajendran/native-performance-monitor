@@ -146,6 +146,22 @@ int main()
         require(slot && slot->x == -692, "negative monitor origin taskbar slot");
         slot = taskbarSlot(bar, {{10000, 1032, 100, 48}, {0, -200, 1920, 48}}, 344, 42, 1900, 8);
         require(slot && slot->x == 1568, "off-monitor controls do not escape bounds");
+        {
+            // Placement passes the slot the strip already occupies as the
+            // preferred position, so an unrelated taskbar change must return
+            // that same slot rather than the nearest one to some other point.
+            // Without this the strip hops whenever an icon or badge appears.
+            auto held = taskbarSlot(bar, controls, 344, 42, 1500, 8);
+            require(held.has_value(), "baseline slot exists");
+            auto again = taskbarSlot(bar, controls, 344, 42, held->x, 8);
+            require(again && again->x == held->x, "an occupied slot is offered back unchanged");
+            std::vector<Rect> grown{{0, 1032, 210, 48}, {760, 1032, 420, 48}, {1580, 1032, 340, 48}};
+            auto after = taskbarSlot(bar, grown, 344, 42, held->x, 8);
+            require(after && after->x == held->x, "a change elsewhere in the bar does not move the strip");
+            std::vector<Rect> taken{{0, 1032, 170, 48}, {760, 1032, 460, 48}, {1240, 1032, 680, 48}};
+            auto moved = taskbarSlot(bar, taken, 344, 42, held->x, 8);
+            require(!moved || moved->x != held->x, "a slot that is genuinely taken is given up");
+        }
         std::cout << checks << " core assertions passed\n";
         return 0;
     }

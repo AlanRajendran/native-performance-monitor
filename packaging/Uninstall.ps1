@@ -11,9 +11,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ownerId = 'NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.3'
+$ownerId = 'NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.4'
 $packageDirectory = [IO.Path]::GetFullPath($PackageDirectory)
-$defaultData = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'NativePerfMonitor-1.3'
+$defaultData = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'NativePerfMonitor-1.4'
 if (-not $DataDirectory) { $DataDirectory = $defaultData }
 $DataDirectory = [IO.Path]::GetFullPath($DataDirectory)
 
@@ -53,7 +53,7 @@ function Finish-Removal([bool]$Success, [string]$Message) {
     if (-not $Quiet) {
         Add-Type -AssemblyName System.Windows.Forms
         $icon = if ($Success) { [Windows.Forms.MessageBoxIcon]::Information } else { [Windows.Forms.MessageBoxIcon]::Error }
-        [Windows.Forms.MessageBox]::Show($Message, 'Uninstall Native Performance Monitor 1.3', [Windows.Forms.MessageBoxButtons]::OK, $icon) | Out-Null
+        [Windows.Forms.MessageBox]::Show($Message, 'Uninstall Native Performance Monitor 1.4', [Windows.Forms.MessageBoxButtons]::OK, $icon) | Out-Null
     }
 }
 try {
@@ -84,13 +84,18 @@ try {
 
     $executable = Join-Path $packageDirectory 'PerfMonitor.exe'
     if (Test-Path -LiteralPath $executable) {
+        # Identity guard: refuse to delete anything that is not our own
+        # executable. Each release line installs to its own folder and ships
+        # its own uninstaller, so this pins the exact version it belongs to.
+        # Update it together with the version resources when releasing.
+        $supportedVersions = @('1.4.0')
         $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($executable)
-        if ($version.FileVersion -ne '1.3.0' -or $version.OriginalFilename -ne 'PerfMonitor.exe' -or $version.ProductName -ne 'NativePerfMonitor') {
+        if ($supportedVersions -notcontains $version.FileVersion -or $version.OriginalFilename -ne 'PerfMonitor.exe' -or $version.ProductName -ne 'NativePerfMonitor') {
             throw 'The executable does not identify itself as NativePerfMonitor. Nothing was removed.'
         }
     }
     # Resolve owned Windows integration before modifying files.
-    $registration = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\NativePerfMonitor-1.3'
+    $registration = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\NativePerfMonitor-1.4'
     $shortcutFolders = @([Environment]::GetFolderPath('DesktopDirectory'), [Environment]::GetFolderPath('Programs'))
     $integration = -not $Isolated
     if ($IntegrationTestRoot) {
@@ -119,7 +124,7 @@ try {
         }
         $shell = New-Object -ComObject WScript.Shell
         foreach ($folder in $shortcutFolders) {
-            $link = Assert-OwnedFile $folder 'Native Performance Monitor 1.3.lnk'
+            $link = Assert-OwnedFile $folder 'Native Performance Monitor 1.4.lnk'
             if ((Test-Path -LiteralPath $link) -and $shell.CreateShortcut($link).TargetPath.Equals($executable,[StringComparison]::OrdinalIgnoreCase)) { $shortcutFiles += $link }
         }
     }
@@ -157,9 +162,9 @@ try {
         if ($key) {
             try {
                 $expected = '"' + $executable + '" --autostart'
-                $actual = [string]$key.GetValue('NativePerfMonitor-1.3', '')
+                $actual = [string]$key.GetValue('NativePerfMonitor-1.4', '')
                 if ($actual.Equals($expected, [StringComparison]::OrdinalIgnoreCase)) {
-                    $key.DeleteValue('NativePerfMonitor-1.3', $false)
+                    $key.DeleteValue('NativePerfMonitor-1.4', $false)
                 }
             }
             finally { $key.Dispose() }
@@ -187,7 +192,7 @@ try {
             Remove-Item -LiteralPath $directory -Force
         }
     }
-    Finish-Removal $true 'Native Performance Monitor 1.3 removed. Owned shortcuts and Installed Apps entry were removed. Unrelated files and earlier versions were kept.'
+    Finish-Removal $true 'Native Performance Monitor 1.4 removed. Owned shortcuts and Installed Apps entry were removed. Unrelated files and earlier versions were kept.'
     exit 0
 }
 catch {

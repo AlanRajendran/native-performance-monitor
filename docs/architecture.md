@@ -83,7 +83,7 @@ to test a metric.
 
 ## Settings
 
-A plain `key=value` file in `%LOCALAPPDATA%\NativePerfMonitor-1.3\settings.ini`,
+A plain `key=value` file in `%LOCALAPPDATA%\NativePerfMonitor-1.4\settings.ini`,
 guarded by a marker file containing the application id. The loader refuses
 redirected paths, reparse points, oversized files and directories owned by
 anything else, and clamps every value on read. Saves are written to a temporary

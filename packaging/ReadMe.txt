@@ -1,8 +1,8 @@
-NATIVE PERFORMANCE MONITOR 1.3.0
+NATIVE PERFORMANCE MONITOR 1.4.0
 
 For normal Windows app integration, open Setup.exe in this folder.
 It installs only for your account, adds desktop and Start menu shortcuts,
-and registers Native Performance Monitor 1.3 in Windows Installed Apps.
+and registers Native Performance Monitor 1.4 in Windows Installed Apps.
 Administrator access is not required. The sign-in startup checkbox is optional.
 
 For portable use, open PerfMonitor.exe directly. No shortcuts or Installed Apps
@@ -27,8 +27,8 @@ The taskbar strip keeps its own readable translucent background.
 Windows light/dark theme is automatic. High contrast uses solid system colors.
 
 GB means 1,000,000,000 bytes; MB means 1,000,000 bytes.
-Settings are in %LOCALAPPDATA%\NativePerfMonitor-1.3.
-Installed files are in %LOCALAPPDATA%\Programs\NativePerfMonitor-1.3.
+Settings are in %LOCALAPPDATA%\NativePerfMonitor-1.4.
+Installed files are in %LOCALAPPDATA%\Programs\NativePerfMonitor-1.4.
 Earlier versions are kept. Exit an older monitor before running this version.
 
 Remove an installed copy through Windows Settings > Apps > Installed apps,

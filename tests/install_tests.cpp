@@ -59,8 +59,8 @@ int wmain(int argc, wchar_t **argv)
         }
         {
             std::ofstream f(source / L"package-manifest.json");
-            f << "{\"owner\":\"NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.3\",\"version\":\"1."
-                 "3.0\"}";
+            f << "{\"owner\":\"NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.4\",\"version\":\"1."
+                 "4.0\"}";
         }
         std::wstring error;
         require(installPackage(source, paths, false, error), "per-user install succeeds in isolated fixture");
@@ -68,14 +68,14 @@ int wmain(int argc, wchar_t **argv)
         require(std::filesystem::exists(target) &&
                     std::filesystem::exists(paths.destination / L"Uninstall.exe"),
                 "both installed EXEs exist");
-        require(shortcutTarget(paths.desktop / L"Native Performance Monitor 1.3.lnk") == target,
+        require(shortcutTarget(paths.desktop / L"Native Performance Monitor 1.4.lnk") == target,
                 "desktop shortcut resolves to installed EXE");
-        require(shortcutTarget(paths.programs / L"Native Performance Monitor 1.3.lnk") == target,
+        require(shortcutTarget(paths.programs / L"Native Performance Monitor 1.4.lnk") == target,
                 "Start menu shortcut resolves to installed EXE");
         HKEY key = nullptr;
         require(RegOpenKeyExW(HKEY_CURRENT_USER, testKey.c_str(), 0, KEY_READ, &key) == ERROR_SUCCESS,
                 "Installed Apps registry entry exists");
-        require(value(key, L"DisplayVersion") == L"1.3.0", "Installed Apps version");
+        require(value(key, L"DisplayVersion") == displayVersion, "Installed Apps version");
         require(value(key, L"UninstallString") ==
                     L"\"" + (paths.destination / L"Uninstall.exe").wstring() + L"\"",
                 "uninstall command quotes complete EXE path");
@@ -122,8 +122,8 @@ int wmain(int argc, wchar_t **argv)
         require(!std::filesystem::exists(target) && !std::filesystem::exists(uninstall) &&
                     !std::filesystem::exists(paths.destination / L"Setup.exe"),
                 "all three owned EXEs removed");
-        require(!std::filesystem::exists(paths.desktop / L"Native Performance Monitor 1.3.lnk") &&
-                    !std::filesystem::exists(paths.programs / L"Native Performance Monitor 1.3.lnk"),
+        require(!std::filesystem::exists(paths.desktop / L"Native Performance Monitor 1.4.lnk") &&
+                    !std::filesystem::exists(paths.programs / L"Native Performance Monitor 1.4.lnk"),
                 "both installed shortcuts removed");
         auto status = RegOpenKeyExW(HKEY_CURRENT_USER, testKey.c_str(), 0, KEY_READ, &key);
         if (status == ERROR_SUCCESS)

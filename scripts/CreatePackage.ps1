@@ -28,7 +28,7 @@ foreach ($name in @('LICENSE.txt')) {
 foreach ($name in @('ReadMe.txt')) {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot "packaging\$name") -Destination $stage
 }
-@{ owner='NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.3'; version=$version } |
+@{ owner='NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.4'; version=$version } |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stage 'package-manifest.json') -Encoding UTF8
 foreach ($file in Get-ChildItem -LiteralPath $stage -File -Force) {
     $file.Attributes = [IO.FileAttributes]::Normal

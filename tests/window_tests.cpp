@@ -64,7 +64,7 @@ int wmain(int argc, wchar_t **argv)
             CoUninitialize();
             return 77;
         }
-        require(!FindWindowW(L"NativePerfMonitor.Controller.1.3", nullptr),
+        require(!FindWindowW(L"NativePerfMonitor.Controller.1.4", nullptr),
                 "no existing monitor; tests must not interrupt a user instance");
         auto exe = std::filesystem::absolute(argv[1]), root = std::filesystem::absolute(argv[2]);
         std::filesystem::create_directories(root);
@@ -74,7 +74,7 @@ int wmain(int argc, wchar_t **argv)
         HWND control = nullptr;
         for (int i = 0; i < 150; ++i)
         {
-            control = FindWindowW(L"NativePerfMonitor.Controller.1.3", nullptr);
+            control = FindWindowW(L"NativePerfMonitor.Controller.1.4", nullptr);
             if (control)
                 break;
             pump(20);
@@ -94,7 +94,7 @@ int wmain(int argc, wchar_t **argv)
                 GetWindowThreadProcessId(h, &pid);
                 wchar_t c[128];
                 GetClassNameW(h, c, 128);
-                if (pid == m.pid && wcscmp(c, L"NativePerfMonitor.Surface.1.3") == 0)
+                if (pid == m.pid && wcscmp(c, L"NativePerfMonitor.Surface.1.4") == 0)
                     m.windows.push_back(h);
                 return TRUE;
             },
@@ -181,7 +181,7 @@ int wmain(int argc, wchar_t **argv)
         SendMessageW(control, WM_COMMAND, 115, 0);
         require(loadSettings(root / L"settings").opacity == 25, "opacity menu restores default");
         SendMessageW(control, WM_COMMAND, 117, 0);
-        auto opacity = FindWindowW(L"NativePerfMonitor.Opacity.1.3", nullptr);
+        auto opacity = FindWindowW(L"NativePerfMonitor.Opacity.1.4", nullptr);
         require(opacity != nullptr, "tray command opens opacity slider");
         auto track = GetDlgItem(opacity, 501);
         require(track && SendMessageW(track, TBM_GETRANGEMIN, 0, 0) == 10 &&
@@ -371,7 +371,7 @@ int wmain(int argc, wchar_t **argv)
         require(IsWindowVisible(panel), "duplicate launch restores instead of toggling panel off");
         DestroyWindow(target);
         target = nullptr;
-        SendMessageW(control, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.3"), 0, 0);
+        SendMessageW(control, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.4"), 0, 0);
         require(WaitForSingleObject(process.hProcess, 5000) == WAIT_OBJECT_0, "clean shutdown");
         DWORD code = 99;
         GetExitCodeProcess(process.hProcess, &code);
@@ -434,9 +434,9 @@ int wmain(int argc, wchar_t **argv)
             DestroyWindow(target);
         if (process.hProcess)
         {
-            auto control = FindWindowW(L"NativePerfMonitor.Controller.1.3", nullptr);
+            auto control = FindWindowW(L"NativePerfMonitor.Controller.1.4", nullptr);
             if (control)
-                PostMessageW(control, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.3"), 0, 0);
+                PostMessageW(control, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.4"), 0, 0);
             if (WaitForSingleObject(process.hProcess, 5000) != WAIT_OBJECT_0)
                 TerminateProcess(process.hProcess, 4);
             CloseHandle(process.hProcess);

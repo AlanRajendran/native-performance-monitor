@@ -3,6 +3,21 @@
 #include <string>
 namespace perf
 {
+// The release version, reported in Windows Installed Apps, in diagnostics and
+// in benchmark reports.
+//
+// Each release line is fully self contained, as 1.1, 1.2 and 1.3 were: its own
+// install folder, settings directory, application id, window classes, single
+// instance mutex, startup value, shortcuts and Installed Apps registration.
+// Two lines can therefore be installed at once and neither can remove or
+// corrupt the other. The cost is that settings do not carry over between them.
+//
+// Releasing a new line means updating, together: this constant, the version
+// resources under resources/, the $supportedVersions guard and the identity
+// strings in packaging/Uninstall.ps1, and the identity strings in src/.
+#define NATIVE_PERF_VERSION "1.4.0"
+inline constexpr wchar_t displayVersion[] = L"" NATIVE_PERF_VERSION;
+inline constexpr char displayVersionNarrow[] = NATIVE_PERF_VERSION;
 struct InstallPaths
 {
     std::filesystem::path destination, desktop, programs;

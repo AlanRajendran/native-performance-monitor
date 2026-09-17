@@ -6,7 +6,7 @@ A lightweight native Windows 11 x64 performance monitor with compact physical-co
 
 Extract the full ZIP into a new folder. **Setup.exe**, **PerfMonitor.exe** and **Uninstall.exe** are visible directly in that folder.
 
-Open **Setup.exe** for normal Windows integration. It installs to `%LOCALAPPDATA%\Programs\NativePerfMonitor-1.3`, creates desktop and Start menu shortcuts, and registers **Native Performance Monitor 1.3** in Windows Settings > Apps > Installed apps. Installation is per user and needs no administrator privileges. The optional sign-in startup checkbox is off by default.
+Open **Setup.exe** for normal Windows integration. It installs to `%LOCALAPPDATA%\Programs\NativePerfMonitor-1.4`, creates desktop and Start menu shortcuts, and registers **Native Performance Monitor 1.4** in Windows Settings > Apps > Installed apps. It installs alongside 1.3 rather than replacing it; remove 1.3 from Windows Installed apps once 1.4 is set up. Installation is per user and needs no administrator privileges. The optional sign-in startup checkbox is off by default.
 
 For portable use, open **PerfMonitor.exe** directly. Keep all seven files together. Portable operation creates no shortcuts or Installed Apps registration. Exit an older running monitor before launching this version. Earlier versions remain unchanged. This is an unsigned local build with a static C++ runtime.
 
@@ -32,7 +32,7 @@ Applications are grouped by normalized executable path; base Windows processes a
 
 ## Settings and removal
 
-Settings are isolated in `%LOCALAPPDATA%\NativePerfMonitor-1.3`. Optional startup uses the current user's `NativePerfMonitor-1.3` Run value. Disabling startup now deletes the correct value. Installation does not change system security, theme or taskbar settings.
+Settings are isolated in `%LOCALAPPDATA%\NativePerfMonitor-1.4`. Optional startup uses the current user's `NativePerfMonitor-1.4` Run value. Each release line keeps its own settings, so 1.4 starts from defaults rather than inheriting 1.3's. Installation does not change system security, theme or taskbar settings.
 
 Remove the installed copy through Windows Installed apps or its **Uninstall.exe**. The native launcher confirms removal and briefly starts an embedded cleanup script through built-in Windows PowerShell so both executables can be deleted. Cleanup checks identity, executable metadata, paths and ownership; it removes exact owned files, matching shortcuts, the matching Installed Apps entry and optional startup registration. Unrelated files and earlier versions remain. Removing a portable copy does not delete another registered installation's settings. No helper stays running.
 
