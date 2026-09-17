@@ -1,5 +1,58 @@
 # Changes
 
+## 1.4.0
+
+Upgrades an existing 1.3 installation in place. Settings, the install location
+and the Installed Apps registration are unchanged, so nothing needs removing
+first and no setting is lost.
+
+### Stability
+
+- Stop the desktop panel and taskbar strip flickering. Placement now compares
+  what it wants against what the shell was last told and does nothing when they
+  match, instead of reapplying position, stacking and visibility every second.
+- Stop the strip hopping between taskbar slots. It keeps the slot it occupies
+  unless that slot is genuinely taken, ignores drift under 12px, and moves at
+  most once every 1.5 seconds. Ordinary taskbar activity — an app opening, a
+  notification badge, the weather widget reflowing — no longer moves it.
+- Stop the strip blinking as windows pass over it. It hides immediately so shell
+  menus are never covered, but waits for the obstruction to stay gone before
+  coming back.
+- Narrow the system-wide event hook from ten event types to three. It previously
+  received focus, selection, state-change and location-change events from every
+  window in every process, which is a continuous stream while anything is being
+  dragged, resized or animated.
+- Suspend z-order repair while a full-screen application is in the foreground,
+  and rate limit it otherwise. Repeatedly reordering windows could drop an
+  exclusive full-screen game out of its presentation mode.
+- Stop re-asserting the strip above the taskbar every second, which could make
+  Explorer re-assert in turn.
+- Read the taskbar layout only while the strip is actually being fitted inside
+  it, and far less often. This work drives Explorer's own UI thread and was a
+  measurable cost on slower machines.
+- Stop rewriting the accessibility text every second when it had not changed;
+  each write broadcast a name-change event system wide.
+
+### Features
+
+- **History** in the tray menu switches every graph between **60 seconds** and
+  **60 minutes**, on both the panel and the strip. The hour view shows
+  one-minute averages and its newest point updates every second. Both ranges are
+  recorded continuously, so switching is instant.
+- Panel opacity now applies to the background only. Text, traces, grid lines and
+  the graph cards are always fully opaque, so content stays readable at any
+  opacity and over any wallpaper. Large graphs sit on solid plot cards.
+
+### Development
+
+- Repository reorganised: source at the root, build scripts in `scripts/`,
+  reference material in `artifacts/`, and real documentation in `docs/` covering
+  the architecture, the placement rules, the rendering model and troubleshooting.
+- `--render-preview` now exports both themes, both surfaces, both history ranges
+  and three opacity settings.
+- Added regression coverage for minute aggregation, partial minutes, missing
+  metrics and long gaps.
+
 ## 1.3.0
 
 - Add per-user Setup.exe with desktop and Start menu shortcuts and Windows Installed Apps registration.
