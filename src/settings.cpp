@@ -86,6 +86,8 @@ Settings loadSettings(const std::filesystem::path &dir)
                 r.compact = n != 0;
             else if (k == "insideTaskbar")
                 r.insideTaskbar = n != 0;
+            else if (k == "longRange")
+                r.range = n != 0 ? Range::Minutes : Range::Seconds;
             else if (k == "panelX")
                 r.panelX = int(std::clamp(n, -1LL, 100000LL));
             else if (k == "panelY")
@@ -159,7 +161,7 @@ bool saveSettings(const std::filesystem::path &dir, const Settings &s, std::wstr
           << "\ncompact=" << s.compact << "\npanelX=" << s.panelX << "\npanelY=" << s.panelY
           << "\npanelW=" << s.panelW << "\npanelH=" << s.panelH << "\nstripX=" << s.stripX
           << "\nopacity=" << s.opacity << "\nadapter=" << s.adapter << "\ninsideTaskbar=" << s.insideTaskbar
-          << "\n";
+          << "\nlongRange=" << (s.range == Range::Minutes) << "\n";
         if (!f)
         {
             error = L"Cannot write settings.";

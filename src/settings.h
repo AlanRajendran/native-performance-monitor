@@ -9,6 +9,7 @@ struct Settings
 {
     bool panel = true, strip = true, locked = true, compact = false;
     bool insideTaskbar = true;
+    Range range = Range::Seconds;
     int panelX = -1, panelY = -1, panelW = 450, panelH = 880, stripX = -1;
     int opacity = 25;
     uint64_t adapter = 0;

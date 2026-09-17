@@ -6,52 +6,98 @@
 
 namespace perf
 {
-void History::append(Sample s)
+void Ring::append(Sample s)
 {
     slots_[next_] = s;
-    next_ = (next_ + 1) % 60;
-    count_ = std::min(size_t(60), count_ + 1);
+    next_ = (next_ + 1) % historyPoints;
+    count_ = std::min(historyPoints, count_ + 1);
 }
-void History::clear()
+void Ring::clear()
 {
     slots_ = {};
     next_ = count_ = 0;
 }
-void History::clearGpu()
+void Ring::clearMetric(size_t metric)
 {
+    if (metric >= std::tuple_size_v<Metrics>)
+        return;
     for (auto &s : slots_)
-    {
-        s.values[1] = s.values[2] = missing;
-    }
+        s.values[metric] = missing;
 }
-void History::push(int64_t second, Metrics values)
+void Ring::push(int64_t tick, Metrics values)
 {
     if (count_)
     {
-        auto &last = slots_[(next_ + 59) % 60];
-        if (second == last.second)
+        auto &last = slots_[(next_ + historyPoints - 1) % historyPoints];
+        if (tick == last.second)
         {
             last.values = values;
             return;
         }
-        if (second < last.second || second - last.second > 60)
+        // A backwards jump or a gap wider than the ring makes every retained
+        // sample unreachable, so start over rather than filling the whole ring.
+        if (tick < last.second || tick - last.second > int64_t(historyPoints))
             clear();
         else
-        {
-            const auto start = last.second;
-            for (auto t = start + 1; t < second; ++t)
+            for (auto t = last.second + 1; t < tick; ++t)
                 append({t, noMetrics});
-        }
     }
-    append({second, values});
+    append({tick, values});
 }
-std::array<Sample, 60> History::ordered() const
+std::array<Sample, historyPoints> Ring::ordered() const
 {
-    std::array<Sample, 60> result{};
-    const auto start = (next_ + 60 - count_) % 60;
+    std::array<Sample, historyPoints> result{};
+    const auto start = (next_ + historyPoints - count_) % historyPoints;
     for (size_t i = 0; i < count_; ++i)
-        result[60 - count_ + i] = slots_[(start + i) % 60];
+        result[historyPoints - count_ + i] = slots_[(start + i) % historyPoints];
     return result;
+}
+void History::clear()
+{
+    seconds_.clear();
+    minutes_.clear();
+    bucket_ = INT64_MIN;
+    sums_ = {};
+    counts_ = {};
+}
+void History::clearGpu()
+{
+    for (size_t metric : {size_t(1), size_t(2)})
+    {
+        seconds_.clearMetric(metric);
+        minutes_.clearMetric(metric);
+        sums_[metric] = 0;
+        counts_[metric] = 0;
+    }
+}
+void History::push(int64_t second, Metrics values)
+{
+    seconds_.push(second, values);
+    // Floor division: negative seconds must not round the bucket towards zero.
+    const int64_t minute = second >= 0 ? second / 60 : (second - 59) / 60;
+    if (minute != bucket_)
+    {
+        bucket_ = minute;
+        sums_ = {};
+        counts_ = {};
+    }
+    Metrics average = noMetrics;
+    for (size_t i = 0; i < values.size(); ++i)
+    {
+        if (valid(values[i]))
+        {
+            sums_[i] += values[i];
+            ++counts_[i];
+        }
+        if (counts_[i])
+            average[i] = sums_[i] / counts_[i];
+    }
+    // Rewriting the same minute each second keeps the newest hour point live.
+    minutes_.push(minute, average);
+}
+std::array<Sample, historyPoints> History::ordered(Range range) const
+{
+    return range == Range::Minutes ? minutes_.ordered() : seconds_.ordered();
 }
 static bool number(std::wstring_view s, size_t &p, uint64_t &v, unsigned base)
 {

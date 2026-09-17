@@ -7,10 +7,14 @@
 
 namespace perf
 {
+// Only `surface` carries the user's opacity. Every other colour is fully
+// opaque so that text, traces, grids and area fills read identically over any
+// wallpaper, whatever the background is set to. `plot` backs the large graph
+// cards; `fill` is the pre-blended opaque tint under each series trace.
 struct Palette
 {
-    D2D1_COLOR_F surface, text, muted, border, grid;
-    std::array<D2D1_COLOR_F, 4> series;
+    D2D1_COLOR_F surface, plot, text, muted, border, grid;
+    std::array<D2D1_COLOR_F, 4> series, fill;
     bool highContrast = false;
 };
 Palette palette(bool dark, bool highContrast = false);
@@ -45,10 +49,11 @@ class Renderer
         dcTarget_.Reset();
     }
     HRESULT drawBitmap(BitmapSurface &bitmap, float dpi, const Snapshot &s, const Palette &p, bool strip,
-                       bool locked, float scroll = 0);
+                       bool locked, float scroll = 0, Range range = Range::Seconds);
     HRESULT drawTarget(ID2D1RenderTarget *target, float width, float height, const Snapshot &s,
-                       const Palette &p, bool strip, bool locked, bool mica, float scroll = 0);
-    std::wstring accessibleText(const Snapshot &s, bool strip) const;
+                       const Palette &p, bool strip, bool locked, float scroll = 0,
+                       Range range = Range::Seconds);
+    std::wstring accessibleText(const Snapshot &s, bool strip, Range range = Range::Seconds) const;
 
   private:
     IDWriteTextFormat *format(float size, bool strong = false);

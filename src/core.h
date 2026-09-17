@@ -18,25 +18,69 @@ inline bool valid(double n)
 }
 using Metrics = std::array<double, 4>;
 constexpr Metrics noMetrics{missing, missing, missing, missing};
+
+// Both history ranges are stored as exactly this many points, so every graph
+// draws the same number of samples whichever range the user selected.
+constexpr size_t historyPoints = 60;
+
+// The two selectable spans. Seconds is the live one-second trace; Minutes
+// averages each wall-clock minute, giving a one-hour view at the same cost.
+enum class Range
+{
+    Seconds,
+    Minutes
+};
+constexpr int64_t rangeSeconds(Range r)
+{
+    return r == Range::Minutes ? 3600 : 60;
+}
+
 struct Sample
 {
     int64_t second = -1;
     Metrics values = noMetrics;
 };
-class History
+
+// A fixed ring of `historyPoints` samples indexed by an absolute tick. The tick
+// unit is whatever the owner counts in: seconds for the live trace, minutes for
+// the hour trace. Gaps shorter than the ring are filled with missing samples so
+// a pause leaves a visible break rather than a false straight line.
+class Ring
 {
-    std::array<Sample, 60> slots_{};
+    std::array<Sample, historyPoints> slots_{};
     size_t next_ = 0, count_ = 0;
     void append(Sample s);
 
   public:
-    void push(int64_t second, Metrics values);
-    std::array<Sample, 60> ordered() const;
+    void push(int64_t tick, Metrics values);
+    std::array<Sample, historyPoints> ordered() const;
     void clear();
-    void clearGpu();
+    void clearMetric(size_t metric);
     size_t size() const
     {
         return count_;
+    }
+};
+
+// Keeps the one-second and one-minute rings in step. Every sample feeds the
+// live ring and accumulates into the current minute; the minute ring's newest
+// point is the running average of the minute in progress, so the hour view
+// advances continuously instead of stepping once every sixty seconds.
+class History
+{
+    Ring seconds_, minutes_;
+    int64_t bucket_ = INT64_MIN;
+    std::array<double, 4> sums_{};
+    std::array<unsigned, 4> counts_{};
+
+  public:
+    void push(int64_t second, Metrics values);
+    std::array<Sample, historyPoints> ordered(Range range = Range::Seconds) const;
+    void clear();
+    void clearGpu();
+    size_t size(Range range = Range::Seconds) const
+    {
+        return range == Range::Minutes ? minutes_.size() : seconds_.size();
     }
 };
 struct EngineKey

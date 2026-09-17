@@ -63,6 +63,24 @@ static TaskbarSnapshot readTaskbar(IUIAutomation *automation)
     std::sort(result.occupied.begin(), result.occupied.end(), [](Rect a, Rect b) { return a.x < b.x; });
     return result;
 }
+// Whether two readings differ enough to be worth acting on. Exact comparison
+// made every one-pixel reflow of a taskbar label look like a layout change.
+static bool settled(const TaskbarSnapshot &a, const TaskbarSnapshot &b)
+{
+    auto close = [](Rect x, Rect y)
+    {
+        return std::abs(x.x - y.x) <= TaskbarObserver::tolerance &&
+               std::abs(x.y - y.y) <= TaskbarObserver::tolerance &&
+               std::abs(x.w - y.w) <= TaskbarObserver::tolerance &&
+               std::abs(x.h - y.h) <= TaskbarObserver::tolerance;
+    };
+    if (a.reliable != b.reliable || a.occupied.size() != b.occupied.size() || !close(a.bounds, b.bounds))
+        return false;
+    for (size_t i = 0; i < a.occupied.size(); ++i)
+        if (!close(a.occupied[i], b.occupied[i]))
+            return false;
+    return true;
+}
 TaskbarObserver::TaskbarObserver()
 {
     stop_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -97,26 +115,37 @@ void TaskbarObserver::start(HWND notify, UINT message)
                 }
                 do
                 {
-                    auto next = readTaskbar(automation.Get());
-                    bool changed = false;
+                    if (enabled_)
                     {
-                        std::lock_guard lock(mutex_);
-                        changed = next.bounds != latest_.bounds || next.occupied != latest_.occupied ||
-                                  next.reliable != latest_.reliable;
-                        latest_ = std::move(next);
+                        auto next = readTaskbar(automation.Get());
+                        bool changed = false;
+                        {
+                            std::lock_guard lock(mutex_);
+                            changed = !settled(next, latest_);
+                            latest_ = std::move(next);
+                        }
+                        if (changed)
+                            PostMessageW(notify, message, 0, 0);
                     }
-                    if (changed)
-                        PostMessageW(notify, message, 0, 0);
-                    // Coalesce shell event bursts and keep idle refreshes at five seconds.
-                    if (WaitForSingleObject(stop_, 1000) == WAIT_OBJECT_0)
+                    // The first wait is a floor on how often Explorer's tree can
+                    // be walked however busy the shell is; the second is the
+                    // idle cadence, cut short when a refresh is requested.
+                    if (WaitForSingleObject(stop_, minimumIntervalMs) == WAIT_OBJECT_0)
                         break;
                     HANDLE waits[] = {stop_, refresh_};
-                    if (WaitForMultipleObjects(2, waits, FALSE, 4000) == WAIT_OBJECT_0)
+                    if (WaitForMultipleObjects(2, waits, FALSE, idleIntervalMs - minimumIntervalMs) ==
+                        WAIT_OBJECT_0)
                         break;
                 } while (true);
             }
             CoUninitialize();
         });
+}
+void TaskbarObserver::enable(bool on)
+{
+    const bool was = enabled_.exchange(on);
+    if (on && !was)
+        request();
 }
 void TaskbarObserver::request()
 {

@@ -46,6 +46,30 @@ int main()
         require(h.size() == 1, "resume after a minute resets displayed window");
         h.push(1, {1, 2, 3, 4});
         require(h.size() == 1, "clock discontinuity");
+        {
+            // The minute range averages each wall-clock minute and keeps the
+            // newest point live, so the hour view advances every second rather
+            // than stepping once a minute.
+            History m;
+            for (int64_t t = 0; t < 60; ++t)
+                m.push(t, {double(t), missing, 10, 20});
+            auto minutes = m.ordered(Range::Minutes);
+            require(m.size(Range::Minutes) == 1, "one whole minute is one point");
+            require(near(minutes[59].values[0], 29.5), "minute point is the mean of its seconds");
+            require(!valid(minutes[59].values[1]), "a metric missing all minute is missing");
+            require(near(minutes[59].values[2], 10), "constant metric survives averaging");
+            m.push(60, {100, missing, 10, 20});
+            minutes = m.ordered(Range::Minutes);
+            require(m.size(Range::Minutes) == 2, "a new minute opens a new point");
+            require(near(minutes[59].values[0], 100), "partial minute reports its running mean");
+            require(near(minutes[58].values[0], 29.5), "the completed minute is unchanged");
+            require(m.ordered(Range::Seconds)[59].values[0] == 100, "second range is unaffected");
+            m.push(61, {0, missing, 10, 20});
+            require(near(m.ordered(Range::Minutes)[59].values[0], 50), "running mean updates in place");
+            // A gap wider than the hour ring cannot be drawn, so it restarts.
+            m.push(60 * 200, {5, 5, 5, 5});
+            require(m.size(Range::Minutes) == 1, "an hours-long gap resets the minute range");
+        }
         auto p = parseGpuInstance(L"pid_1234_luid_0x00000001_0x00aBcD09_phys_0_eng_2_engtype_3D");
         require(p && p->pid == 1234 && p->hasPid && p->hasEngine && p->key.adapter == 0x100abcd09ULL &&
                     p->key.engine == 2,

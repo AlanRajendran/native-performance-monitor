@@ -10,18 +10,38 @@ static D2D1_COLOR_F color(UINT32 rgb, float a = 1)
 {
     return D2D1::ColorF(rgb, a);
 }
+// Blends two opaque colours. Used instead of alpha so that subtle marks stay
+// fully opaque: a 14%-of-text grid line is a solid colour, not a see-through one.
+static D2D1_COLOR_F mix(D2D1_COLOR_F a, D2D1_COLOR_F b, float t)
+{
+    return D2D1::ColorF(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1.f);
+}
 Palette palette(bool dark, bool high)
 {
-    Palette p =
-        dark ? Palette{color(0x252930), color(0xf3f4f7),
-                       color(0xb2bac6), color(0x424952),
-                       color(0x3a414a), {color(0x65bded), color(0xba9be7), color(0x62cbd1), color(0xeab561)}}
-             : Palette{color(0xf6f7f9), color(0x1c1e22),
-                       color(0x5c626b), color(0xd3d8df),
-                       color(0xe0e4e9), {color(0x0077b5), color(0x8056b7), color(0x007e83), color(0xb66e13)}};
+    Palette p;
+    if (dark)
+    {
+        p.surface = color(0x252930);
+        p.plot = color(0x2c313a);
+        p.text = color(0xf3f4f7);
+        p.muted = color(0xb2bac6);
+        p.series = {color(0x65bded), color(0xba9be7), color(0x62cbd1), color(0xeab561)};
+    }
+    else
+    {
+        p.surface = color(0xf6f7f9);
+        p.plot = color(0xffffff);
+        p.text = color(0x1c1e22);
+        p.muted = color(0x5c626b);
+        p.series = {color(0x0077b5), color(0x8056b7), color(0x007e83), color(0xb66e13)};
+    }
+    p.grid = mix(p.plot, p.text, .14f);
+    p.border = mix(p.surface, p.text, .30f);
+    for (size_t i = 0; i < p.series.size(); ++i)
+        p.fill[i] = mix(p.plot, p.series[i], .18f);
+    // The caller replaces this with the configured opacity; everything else
+    // stays at full alpha so content never washes out into the wallpaper.
     p.surface.a = .25f;
-    p.border.a = .40f;
-    p.grid.a = .40f;
     if (high)
     {
         auto cv = [](int id)
@@ -30,11 +50,13 @@ Palette palette(bool dark, bool high)
             return D2D1::ColorF(float(GetRValue(c)) / 255, float(GetGValue(c)) / 255,
                                 float(GetBValue(c)) / 255);
         };
-        p.surface = cv(COLOR_WINDOW);
+        p.surface = p.plot = cv(COLOR_WINDOW);
         p.text = p.muted = cv(COLOR_WINDOWTEXT);
         p.border = p.grid = p.text;
         for (auto &c : p.series)
             c = p.text;
+        for (auto &c : p.fill)
+            c = p.plot;
         p.highContrast = true;
     }
     return p;
@@ -138,7 +160,7 @@ IDWriteTextFormat *Renderer::format(float size, bool strong)
     return f.Get();
 }
 HRESULT Renderer::drawBitmap(BitmapSurface &b, float dpi, const Snapshot &s, const Palette &p, bool strip,
-                             bool locked, float scroll)
+                             bool locked, float scroll, Range range)
 {
     if (!dcTarget_)
     {
@@ -154,14 +176,14 @@ HRESULT Renderer::drawBitmap(BitmapSurface &b, float dpi, const Snapshot &s, con
     if (FAILED(hr))
         return hr;
     dcTarget_->SetDpi(dpi, dpi);
-    hr = drawTarget(dcTarget_.Get(), b.width * 96.f / dpi, b.height * 96.f / dpi, s, p, strip, locked, false,
-                    scroll);
+    hr = drawTarget(dcTarget_.Get(), b.width * 96.f / dpi, b.height * 96.f / dpi, s, p, strip, locked, scroll,
+                    range);
     if (hr == D2DERR_RECREATE_TARGET)
         dcTarget_.Reset();
     return hr;
 }
 HRESULT Renderer::drawTarget(ID2D1RenderTarget *t, float w, float h, const Snapshot &s, const Palette &p,
-                             bool isStrip, bool locked, bool mica, float scroll)
+                             bool isStrip, bool locked, float scroll, Range range)
 {
     ComPtr<ID2D1SolidColorBrush> brush;
     auto hr = t->CreateSolidColorBrush(p.text, &brush);
@@ -184,29 +206,34 @@ HRESULT Renderer::drawTarget(ID2D1RenderTarget *t, float w, float h, const Snaps
         t->DrawTextW(v.c_str(), UINT32(v.size()), f, D2D1::RectF(x, y, x + width, y + size * 1.7f),
                      brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
     };
-    auto ordered = s.history.ordered();
+    auto ordered = s.history.ordered(range);
+    constexpr int points = int(historyPoints);
     auto graph = [&](float x, float y, float width, float height, int metric, bool mini)
     {
         if (!mini)
         {
+            // An opaque plot card keeps every graph legible over any wallpaper
+            // while the panel behind it follows the user's opacity setting.
+            set(p.plot);
+            t->FillRectangle(D2D1::RectF(x, y, x + width, y + height), brush.Get());
             for (int j = 1; j < 6; ++j)
                 line(x + width * j / 6, y, x + width * j / 6, y + height, p.grid, .5f);
             for (int j = 1; j < 4; ++j)
                 line(x, y + height * j / 4, x + width, y + height * j / 4, p.grid, .5f);
         }
-        for (int start = 0; start < 60;)
+        for (int start = 0; start < points;)
         {
-            while (start < 60 && !valid(ordered[start].values[metric]))
+            while (start < points && !valid(ordered[start].values[metric]))
                 ++start;
-            if (start == 60)
+            if (start == points)
                 break;
             int end = start;
-            while (end + 1 < 60 && valid(ordered[end + 1].values[metric]))
+            while (end + 1 < points && valid(ordered[end + 1].values[metric]))
                 ++end;
             auto point = [&](int i)
             {
                 return D2D1::Point2F(
-                    x + width * i / 59,
+                    x + width * i / (points - 1),
                     y + height * (1 - float(std::clamp(ordered[i].values[metric], 0.0, 100.0)) / 100));
             };
             ComPtr<ID2D1PathGeometry> path;
@@ -220,9 +247,7 @@ HRESULT Renderer::drawTarget(ID2D1RenderTarget *t, float w, float h, const Snaps
                 sink->AddLine({point(end).x, y + height});
                 sink->EndFigure(D2D1_FIGURE_END_CLOSED);
                 sink->Close();
-                auto fill = p.series[metric];
-                fill.a = p.highContrast ? .08f : .13f;
-                set(fill);
+                set(p.fill[metric]);
                 t->FillGeometry(path.Get(), brush.Get());
             }
             for (int i = start + 1; i <= end; ++i)
@@ -244,14 +269,14 @@ HRESULT Renderer::drawTarget(ID2D1RenderTarget *t, float w, float h, const Snaps
             t->DrawRectangle(D2D1::RectF(x, y, x + width, y + height), brush.Get(), .6f);
         }
     };
+    const std::wstring span = range == Range::Minutes ? L"60 minutes" : L"60 seconds";
     t->BeginDraw();
     t->SetTransform(D2D1::Matrix3x2F::Identity());
     t->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
     t->Clear(D2D1::ColorF(0, 0));
-    auto bg = p.surface;
-    if (mica)
-        bg.a = .35f;
-    set(bg);
+    // The only mark that carries the user's opacity. Everything drawn after it
+    // is opaque, so content stays readable at any background setting.
+    set(p.surface);
     t->FillRoundedRectangle(
         D2D1::RoundedRect(D2D1::RectF(0, 0, w, h), isStrip ? 7.f : 9.f, isStrip ? 7.f : 9.f), brush.Get());
     set(p.border);
@@ -298,7 +323,7 @@ HRESULT Renderer::drawTarget(ID2D1RenderTarget *t, float w, float h, const Snaps
                                                  : std::to_wstring(s.cores.size()) + L" physical cores";
         text(summary, margin, 89, usable, 10, p.muted);
         graph(margin, 110, usable, 43, 0, false);
-        text(L"60 seconds", margin, 155, 100, 9, p.muted);
+        text(span, margin, 155, 100, 9, p.muted);
         text(L"0–100%", w - 90, 155, 74, 9, p.muted, false, true);
         float y = 176;
         std::wstring previous;
@@ -317,17 +342,18 @@ HRESULT Renderer::drawTarget(ID2D1RenderTarget *t, float w, float h, const Snaps
             text(L"Core " + std::to_wstring(core.id), margin, y + 3, 68, 10.5f, p.text);
             auto badge = core.kind == L"Performance" ? L"P" : core.kind == L"Efficiency" ? L"E" : L"";
             text(badge, margin + 63, y + 3, 16, 10, p.series[0], true);
-            auto values = core.history.ordered();
+            auto values = core.history.ordered(range);
             float gx = margin + 83, gw = usable - 131, gy = y + 4, gh = 15;
             auto ink = p.series[0];
             if (core.kind == L"Efficiency")
                 ink = p.series[2];
-            for (int i = 1; i < 60; ++i)
+            for (int i = 1; i < points; ++i)
                 if (valid(values[i - 1].values[0]) && valid(values[i].values[0]))
                 {
                     auto py = [&](int n)
                     { return gy + gh * (1 - float(std::clamp(values[n].values[0], 0.0, 100.0)) / 100.f); };
-                    line(gx + gw * (i - 1) / 59.f, py(i - 1), gx + gw * i / 59.f, py(i), ink, 1.1f);
+                    line(gx + gw * (i - 1) / float(points - 1), py(i - 1), gx + gw * i / float(points - 1),
+                         py(i), ink, 1.1f);
                 }
             text(formatPercent(core.current), w - margin - 44, y + 3, 44, 10.5f, p.text, false, true);
             y += 24;
@@ -391,7 +417,8 @@ HRESULT Renderer::drawTarget(ID2D1RenderTarget *t, float w, float h, const Snaps
         }
         if (s.apps.empty())
             text(L"Waiting for application counters…", margin, first, usable, 11, p.muted);
-        text(L"60 seconds · Updates every second", margin, first + 120, usable, 9, p.muted, false, true);
+        text(span + (range == Range::Minutes ? L" · One-minute averages" : L" · Updates every second"),
+             margin, first + 120, usable, 9, p.muted, false, true);
         t->SetTransform(D2D1::Matrix3x2F::Identity());
         t->PopAxisAlignedClip();
         if (panelContentHeight(s.cores) > h && !locked)
@@ -399,19 +426,21 @@ HRESULT Renderer::drawTarget(ID2D1RenderTarget *t, float w, float h, const Snaps
     }
     return t->EndDraw();
 }
-std::wstring Renderer::accessibleText(const Snapshot &s, bool strip) const
+std::wstring Renderer::accessibleText(const Snapshot &s, bool strip, Range range) const
 {
     std::wstring text = std::wstring(s.paused ? L"Paused. " : L"") + L"CPU " + formatPercent(s.current[0]) +
                         L"; GPU " + formatPercent(s.current[1]) + L"; dedicated VRAM " +
                         formatBytes(s.vramUsed) + L"; RAM " + formatBytes(s.ramUsed) + L".";
     if (!strip)
     {
+        text += std::wstring(L"\nGraphs show the last ") +
+                (range == Range::Minutes ? L"60 minutes as one-minute averages." : L"60 seconds.");
         text += L"\n" + s.cpuName + L"; " + std::to_wstring(s.cores.size()) + L" cores; sampled " +
                 std::to_wstring(s.updatedMs) + L".";
         for (auto &c : s.cores)
             text += L"\nCore " + std::to_wstring(c.id) + L" " + c.kind + L", " +
                     formatPercent(c.current, true) + L"; history samples " +
-                    std::to_wstring(c.history.size()) + L".";
+                    std::to_wstring(c.history.size(range)) + L".";
     }
     if (!strip)
         for (auto &a : s.apps)
@@ -426,6 +455,10 @@ Snapshot demonstrationSnapshot()
     s.updatedMs = GetTickCount64();
     s.gpuName = L"NVIDIA GeForce RTX 5070 Ti";
     s.cpuName = L"Intel Core Ultra 5 245KF";
+    // A full hour is generated so that both the one-second and the one-minute
+    // range have something to draw in previews and screenshots. The final
+    // sixty seconds carry the detailed shape the live view shows.
+    const int64_t now = int64_t(s.updatedMs / 1000), hour = 3600;
     for (unsigned id : {0U, 1U, 10U, 11U, 12U, 13U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U})
     {
         CpuCore c;
@@ -433,13 +466,14 @@ Snapshot demonstrationSnapshot()
         c.kind = (id < 2 || id >= 10) ? L"Performance" : L"Efficiency";
         c.efficiencyClass = c.kind == L"Performance" ? 1 : 0;
         c.logical = {{0, id}};
-        for (int j = 0; j < 60; ++j)
+        for (int64_t j = 0; j < hour; ++j)
         {
-            double v = id == 3   ? 75 + 9 * sin(j * .16)
-                       : id == 8 ? 60 + 8 * sin(j * .13)
-                                 : 4 + 2 * sin(j * .4 + id);
+            const double minutes = double(j) / 60, detail = double(j - (hour - 60));
+            double v = id == 3   ? 75 + 9 * sin(detail * .16) - 14 * cos(minutes * .21)
+                       : id == 8 ? 60 + 8 * sin(detail * .13) + 11 * sin(minutes * .17)
+                                 : 4 + 2 * sin(detail * .4 + id) + 3 * (1 + sin(minutes * .3 + id));
             c.current = v;
-            c.history.push(int64_t(s.updatedMs / 1000) - 59 + j, {v, missing, missing, missing});
+            c.history.push(now - (hour - 1) + j, {v, missing, missing, missing});
         }
         s.cores.push_back(std::move(c));
     }
@@ -447,17 +481,22 @@ Snapshot demonstrationSnapshot()
     s.ramUsed = 12.8 * 1073741824;
     s.vramTotal = 16772022272.;
     s.vramUsed = 3.4 * 1073741824;
-    for (int i = 0; i < 60; ++i)
+    for (int64_t j = 0; j < hour; ++j)
     {
+        // `i` walks the last minute exactly as before so the one-second view is
+        // unchanged; `m` adds slower movement that only the hour view resolves.
+        const double i = double(j - (hour - 60)), m = double(j) / 60;
         Metrics v{12 + 4 * sin(i * .61) + 2 * cos(i * 1.73) + 29 * exp(-pow((i - 19) / 2.8, 2)) +
-                      39 * exp(-pow((i - 42) / 1.9, 2)),
+                      39 * exp(-pow((i - 42) / 1.9, 2)) + 13 * (1 + sin(m * .27)),
                   18 + 6 * sin(i * .23) + 5 * cos(i * .76) + 47 * exp(-pow((i - 31) / 4.2, 2)) +
-                      25 * exp(-pow((i - 47) / 2.3, 2)),
-                  25. + 7 * (i > 14) + 10 * (i > 30) + 1.3 * sin(i * .2),
-                  35. + 3 * (i > 21) + 1.5 * (i > 38) + .4 * sin(i * .24)};
-        if (i == 59)
+                      25 * exp(-pow((i - 47) / 2.3, 2)) + 9 * (1 + cos(m * .19)),
+                  25. + 7 * (i > 14) + 10 * (i > 30) + 1.3 * sin(i * .2) + 6 * sin(m * .11),
+                  35. + 3 * (i > 21) + 1.5 * (i > 38) + .4 * sin(i * .24) + 4 * sin(m * .08)};
+        for (auto &n : v)
+            n = std::clamp(n, 0., 100.);
+        if (j == hour - 1)
             v = {14, 28, 42.5, 40};
-        s.history.push(int64_t(s.updatedMs / 1000) - 59 + i, v);
+        s.history.push(now - (hour - 1) + j, v);
         s.current = v;
     }
     s.apps = {{L"blender", L"Blender", 2, 7.2, 22, 2.1 * 1073741824, 2.4 * 1073741824},
