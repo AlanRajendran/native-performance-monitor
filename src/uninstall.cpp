@@ -49,13 +49,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int)
         }
     }
     LocalFree(argv);
-    if ((yes || !data.empty() || !result.empty() || !integrationRoot.empty()) && (!isolated || data.empty() || result.empty()))
+    if ((yes || !data.empty() || !result.empty() || !integrationRoot.empty()) &&
+        (!isolated || data.empty() || result.empty()))
         return 2;
     if (!yes)
     {
         auto message = L"Remove Native Performance Monitor 1.3 from:\n\n" + folder.wstring() +
                        L"\n\nThis removes this copy's program files, settings and matching optional startup "
-                       L"entry, owned shortcuts and Installed Apps registration. Earlier versions and unrelated files are kept.";
+                       L"entry, owned shortcuts and Installed Apps registration. Earlier versions and "
+                       L"unrelated files are kept.";
         if (MessageBoxW(nullptr, message.c_str(), L"Uninstall Native Performance Monitor 1.3",
                         MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
             return 0;
@@ -75,7 +77,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int)
              L" -ParentPid " + std::to_wstring(GetCurrentProcessId());
     if (isolated)
         script += L" -Isolated -Quiet -DataDirectory " + literal(data) + L" -ResultFile " + literal(result);
-    if (!integrationRoot.empty()) script += L" -IntegrationTestRoot " + literal(integrationRoot);
+    if (!integrationRoot.empty())
+        script += L" -IntegrationTestRoot " + literal(integrationRoot);
     DWORD encodedSize = 0;
     CryptBinaryToStringW(reinterpret_cast<const BYTE *>(script.data()), DWORD(script.size() * 2),
                          CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, nullptr, &encodedSize);

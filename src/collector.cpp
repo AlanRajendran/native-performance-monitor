@@ -376,7 +376,9 @@ struct Collector::Impl
                                      {
                                          auto key = parseCpuInstance(name);
                                          if (key)
-                                             logicalValues[*key] = valid(value) ? std::clamp(100.0 - value, 0.0, 100.0) : missing;
+                                             logicalValues[*key] = valid(value)
+                                                                       ? std::clamp(100.0 - value, 0.0, 100.0)
+                                                                       : missing;
                                      });
         for (auto &core : current.cores)
         {
