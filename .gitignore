@@ -1,0 +1,22 @@
+# Build output
+/build/
+/out/
+/release/
+/.vs/
+*.user
+*.suo
+*.pdb
+*.ilk
+*.exe
+*.obj
+
+# Test fixtures produced by ctest
+/test-artifacts/
+/window-test-artifacts/
+/installation-tests/
+/uninstall-tests/
+
+# Release binaries, benchmark runs and screenshots are kept on disk for
+# reference but are not source; see docs/repository-layout.md.
+/artifacts/releases/*.zip
+/artifacts/benchmarks/*.csv

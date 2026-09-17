@@ -1,0 +1,15 @@
+NativePerfMonitor 1.3.0
+Measured seconds: 180.313
+Warm-up seconds: 30
+Samples: 180
+Logical processors: 14
+Average machine CPU percent: 0.0563257
+Single-core equivalent percent: 0.788559
+Median working set bytes: 44240896
+95th percentile working set bytes: 44707840
+Peak sampled working set bytes: 44773376
+Peak private bytes: 25034752
+DPI: 96
+Desktop panel visible: 1
+Taskbar strip visible: 1
+Locked: 1

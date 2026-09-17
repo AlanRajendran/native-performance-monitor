@@ -1,0 +1,2 @@
+afd1ccb444171ee931b3ad6ea101a31f718a623e271611e340d754a1c116c81e  NativePerfMonitor-1.0.0-source.zip
+e80def95ccd761ec90d9a5adbf15aab02d3c6ba1c40277350769506ba12f5f8e  NativePerfMonitor-1.0.0-win-x64.zip

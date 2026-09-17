@@ -1,0 +1,158 @@
+{
+  "cores": [
+    {
+      "core": 0,
+      "efficiency_class": 1,
+      "smt": false,
+      "logical_processors": [
+        {
+          "group": 0,
+          "processor": 0
+        }
+      ]
+    },
+    {
+      "core": 1,
+      "efficiency_class": 1,
+      "smt": false,
+      "logical_processors": [
+        {
+          "group": 0,
+          "processor": 1
+        }
+      ]
+    },
+    {
+      "core": 2,
+      "efficiency_class": 0,
+      "smt": false,
+      "logical_processors": [
+        {
+          "group": 0,
+          "processor": 2
+        }
+      ]
+    },
+    {
+      "core": 3,
+      "efficiency_class": 0,
+      "smt": false,
+      "logical_processors": [
+        {
+          "group": 0,
+          "processor": 3
+        }
+      ]
+    },
+    {
+      "core": 4,
+      "efficiency_class": 0,
+      "smt": false,
+      "logical_processors": [
+        {
+          "group": 0,
+          "processor": 4
+        }
+      ]
+    },
+    {
+      "core": 5,
+      "efficiency_class": 0,
+      "smt": false,
+      "logical_processors": [
+        {
+          "group": 0,
+          "processor": 5
+        }
+      ]
+    },
+    {
+      "core": 6,
+      "efficiency_class": 0,
+      "smt": false,
+      "logical_processors": [
+        {
+          "group": 0,
+          "processor": 6
+        }
+      ]
+    },
+    {
+      "core": 7,
+      "efficiency_class": 0,
+      "smt": false,
+      "logical_processors": [
+        {
+          "group": 0,
+          "processor": 7
+        }
+      ]
+    },
+    {
+      "core": 8,
+      "efficiency_class": 0,
+      "smt": false,
+      "logical_processors": [
+        {
+          "group": 0,
+          "processor": 8
+        }
+      ]
+    },
+    {
+      "core": 9,
+      "efficiency_class": 0,
+      "smt": false,
+      "logical_processors": [
+        {
+          "group": 0,
+          "processor": 9
+        }
+      ]
+    },
+    {
+      "core": 10,
+      "efficiency_class": 1,
+      "smt": false,
+      "logical_processors": [
+        {
+          "group": 0,
+          "processor": 10
+        }
+      ]
+    },
+    {
+      "core": 11,
+      "efficiency_class": 1,
+      "smt": false,
+      "logical_processors": [
+        {
+          "group": 0,
+          "processor": 11
+        }
+      ]
+    },
+    {
+      "core": 12,
+      "efficiency_class": 1,
+      "smt": false,
+      "logical_processors": [
+        {
+          "group": 0,
+          "processor": 12
+        }
+      ]
+    },
+    {
+      "core": 13,
+      "efficiency_class": 1,
+      "smt": false,
+      "logical_processors": [
+        {
+          "group": 0,
+          "processor": 13
+        }
+      ]
+    }
+  ]
+}
