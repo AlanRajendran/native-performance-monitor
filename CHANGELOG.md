@@ -35,6 +35,22 @@ way you want it.
   measurable cost on slower machines.
 - Stop rewriting the accessibility text every second when it had not changed;
   each write broadcast a name-change event system wide.
+- Put the surfaces back when something else buries them. Z-order is shared
+  state that any process can change silently, so it is now checked against what
+  is actually on screen every pass rather than assumed from the last request.
+  Previously a surface pushed behind the wallpaper host or the taskbar stayed
+  there, invisible, until the tray menu toggle forced a fresh placement.
+- Never send the panel to the bottom of the z-order when the desktop host
+  cannot be identified, which happens while the wallpaper host is recreated.
+  Leaving the stacking alone is always safer than burying the window.
+
+### Appearance
+
+- The taskbar strip now looks embedded in the taskbar instead of like a card
+  resting on it: inside the bar it draws no background, no border, no rounded
+  corners and no cell dividers, and its graph fills tint the bar rather than
+  covering it. Windows' own window border is turned off for both surfaces.
+  Above the taskbar the strip keeps its plate, where it needs one.
 
 ### Features
 

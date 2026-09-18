@@ -232,11 +232,13 @@ struct Surface
     float dpi = 96, scroll = 0;
     BitmapSurface bitmap;
     ValueProvider *provider = nullptr;
-    // Last geometry, z-order anchor and visibility actually handed to the shell.
-    // Placement compares against these and calls nothing when they still hold.
+    // The last rectangle handed to the shell. Position and size are state only
+    // this program changes, so they can be cached and compared against.
+    //
+    // Z-order deliberately is NOT cached. Any process can restack any window at
+    // any time without telling us, so a remembered anchor says nothing about
+    // where the window actually sits now. It has to be observed each pass.
     Rect applied{};
-    HWND appliedAfter = nullptr;
-    int appliedVisible = -1;
     bool appliedValid = false;
     std::wstring appliedText;
 };
@@ -255,12 +257,13 @@ class Application
     bool stripHasRoom = true, stripInside = false, stripPlacedInside = false;
     // Placement damping. Every one of these exists to stop an oscillating
     // input from reaching the screen; see docs/placement.md.
-    static constexpr uint64_t restackIntervalMs = 2000; // minimum gap between z-order repairs
-    static constexpr uint64_t stripSettleMs = 1500;     // minimum gap between taskbar slot moves
-    static constexpr uint64_t stripRestoreMs = 700;     // quiet time before the strip comes back
-    static constexpr int stripDeadband = 12;            // slot drift ignored outright, in pixels
-    static constexpr UINT geometryDelayMs = 250;        // quiet time before a shell event is acted on
-    uint64_t panelRestackMs = 0, stripMovedMs = 0, stripBlockedMs = 0;
+    static constexpr uint64_t restackIntervalMs = 600; // anti-fight gap between z-order repairs
+    static constexpr uint64_t stripSettleMs = 1500;    // minimum gap between taskbar slot moves
+    static constexpr uint64_t stripRestoreMs = 700;    // quiet time before the strip comes back
+    static constexpr int stripDeadband = 12;           // slot drift ignored outright, in pixels
+    static constexpr UINT geometryDelayMs = 250;       // quiet time before a shell event is acted on
+    uint64_t panelRestackMs = 0, stripTopmostMs = 0, stripMovedMs = 0, stripBlockedMs = 0;
+    bool panelRaised = false;
     HWND opacityWindow = nullptr, opacityTrack = nullptr, opacityValue = nullptr;
     HBRUSH opacityBrush = nullptr;
     HFONT opacityFont = nullptr;
@@ -500,14 +503,30 @@ class Application
     {
         BOOL d = s.strip ? shellDark : dark;
         DwmSetWindowAttribute(s.hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &d, sizeof(d));
-        DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
+        // Rounded corners suit a surface that reads as its own object. Embedded
+        // in the taskbar they outline the strip as a separate window sitting on
+        // the bar, which is exactly the impression to avoid.
+        const bool embedded = stripEmbedded(s);
+        DWM_WINDOW_CORNER_PREFERENCE corner = embedded ? DWMWCP_DONOTROUND : DWMWCP_ROUND;
         DwmSetWindowAttribute(s.hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
+        // DWM draws its own hairline border around a window. Both surfaces draw
+        // whatever outline they want inside their own bitmap, so the system one
+        // is never wanted; on the embedded strip it is the single thing that
+        // made it look like a floating card.
+        COLORREF border = DWMWA_COLOR_NONE;
+        DwmSetWindowAttribute(s.hwnd, DWMWA_BORDER_COLOR, &border, sizeof(border));
         // True alpha translucency works consistently when locked or unlocked.
         // Mica is a wallpaper-derived material and cannot supply this layered-window effect.
         DWM_SYSTEMBACKDROP_TYPE type = DWMSBT_NONE;
         DwmSetWindowAttribute(s.hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &type, sizeof(type));
         MARGINS margins{};
         DwmExtendFrameIntoClientArea(s.hwnd, &margins);
+    }
+    // Whether this surface is currently drawn as taskbar content rather than as
+    // its own panel. Painting and the window frame must agree on this.
+    bool stripEmbedded(const Surface &s) const
+    {
+        return s.strip && stripInside && !contrast;
     }
     void applyMode()
     {
@@ -541,35 +560,44 @@ class Application
     // An input that oscillates therefore stops at the comparison instead of
     // turning into visible movement.
     // ---------------------------------------------------------------------
-    void applyGeometry(Surface &s, Rect want, HWND after = nullptr)
+    void applyGeometry(Surface &s, Rect want)
     {
         const bool fresh = !s.appliedValid;
-        const bool moved = fresh || s.applied != want;
-        const bool resized = fresh || s.applied.w != want.w || s.applied.h != want.h;
-        const bool restacking = after && (fresh || s.appliedAfter != after);
-        if (!moved && !restacking)
+        if (!fresh && s.applied == want)
             return;
-        UINT flags = SWP_NOACTIVATE;
-        if (!moved)
-            flags |= SWP_NOMOVE | SWP_NOSIZE;
-        if (!restacking)
-            flags |= SWP_NOZORDER;
-        SetLastError(0);
-        const bool placed = SetWindowPos(s.hwnd, restacking ? after : nullptr, want.x, want.y, want.w, want.h,
-                                         flags) != FALSE;
-        if (restacking)
-        {
-            SetPropW(s.hwnd, L"NativePerfMonitor.ZOrderError",
-                     reinterpret_cast<HANDLE>(uintptr_t(placed ? 0 : GetLastError())));
-            SetPropW(s.hwnd, L"NativePerfMonitor.ZOrderAnchor", after);
-            s.appliedAfter = after;
-        }
+        const bool resized = s.applied.w != want.w || s.applied.h != want.h;
+        SetWindowPos(s.hwnd, nullptr, want.x, want.y, want.w, want.h, SWP_NOACTIVATE | SWP_NOZORDER);
         s.applied = want;
         s.appliedValid = true;
         // A layered window keeps its old bitmap across a resize, so the new
         // extent would show stale pixels until something else repainted it.
         if (resized && !fresh)
             paint(s);
+    }
+    // Always calls the shell. Callers must decide, from what they can see right
+    // now, that the window is in the wrong place; there is nothing to compare
+    // against here because the previous answer may have been overruled since.
+    void applyZOrder(Surface &s, HWND after)
+    {
+        SetLastError(0);
+        const bool placed =
+            SetWindowPos(s.hwnd, after, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE) != FALSE;
+        SetPropW(s.hwnd, L"NativePerfMonitor.ZOrderError",
+                 reinterpret_cast<HANDLE>(uintptr_t(placed ? 0 : GetLastError())));
+        SetPropW(s.hwnd, L"NativePerfMonitor.ZOrderAnchor", after);
+    }
+    // Whether the taskbar currently sits above the strip, which would hide it
+    // completely. Walks upwards from the strip, so it only ever visits the few
+    // windows in the topmost band above it.
+    bool stripBelowTaskbar()
+    {
+        auto bar = FindWindowW(L"Shell_TrayWnd", nullptr);
+        if (!bar)
+            return false;
+        for (auto h = GetWindow(strip.hwnd, GW_HWNDPREV); h; h = GetWindow(h, GW_HWNDPREV))
+            if (h == bar)
+                return true;
+        return false;
     }
     // True while an application owns the whole monitor without a caption, which
     // is what an exclusive full-screen game or a video player looks like.
@@ -606,32 +634,53 @@ class Application
     void invalidatePlacement()
     {
         for (auto s : {&panel, &strip})
-        {
             s->appliedValid = false;
-            s->appliedAfter = nullptr;
-        }
-        panelRestackMs = 0;
-        stripMovedMs = 0;
+        panelRestackMs = stripTopmostMs = stripMovedMs = 0;
+        panelRaised = false;
     }
-    // Re-stacking is the most disruptive thing this program does to the rest of
-    // the desktop, so it is rate limited and skipped entirely while a
-    // full-screen application owns the foreground.
+    // Keeps the locked panel just above the desktop. desktopAnchor() reports the
+    // panel's own handle when it is already correctly placed, so a stable
+    // desktop costs one enumeration and no shell call. The rate limit only
+    // bounds how hard this pushes back when another program keeps restacking
+    // us; it deliberately does not delay the first repair.
     void restack()
     {
         if (!settings.locked)
         {
-            applyGeometry(panel, panel.applied, HWND_TOP);
+            // Unlocked, the panel is an ordinary window the user can raise and
+            // lower at will, so it is lifted once and then left alone.
+            if (!panelRaised)
+            {
+                panelRaised = true;
+                applyZOrder(panel, HWND_TOP);
+            }
             return;
         }
-        const auto now = GetTickCount64();
-        if (panel.appliedValid && panelRestackMs && now - panelRestackMs < restackIntervalMs)
-            return;
-        panelRestackMs = now;
+        panelRaised = false;
         if (fullscreenForeground())
             return;
         auto anchor = desktopAnchor();
-        if (anchor != panel.hwnd)
-            applyGeometry(panel, panel.applied, anchor);
+        if (anchor == panel.hwnd)
+            return;
+        const auto now = GetTickCount64();
+        if (panelRestackMs && now - panelRestackMs < restackIntervalMs)
+            return;
+        panelRestackMs = now;
+        applyZOrder(panel, anchor);
+    }
+    // The strip has to stay above the taskbar to be visible at all. It is put
+    // there once and then only put back when it is seen to have lost the
+    // position -- re-asserting it unconditionally is what made Explorer and this
+    // program take turns restacking each other.
+    void keepStripAbove(bool fresh)
+    {
+        if (!fresh && !stripBelowTaskbar())
+            return;
+        const auto now = GetTickCount64();
+        if (!fresh && stripTopmostMs && now - stripTopmostMs < restackIntervalMs)
+            return;
+        stripTopmostMs = now;
+        applyZOrder(strip, HWND_TOPMOST);
     }
     HWND desktopAnchor()
     {
@@ -683,7 +732,11 @@ class Application
             // Raise it above the desktop host when no ordinary window precedes it.
             return HWND_TOP;
         }
-        return HWND_BOTTOM;
+        // No desktop host was found covering this monitor, which happens while
+        // the wallpaper host is being recreated. HWND_BOTTOM here would drop the
+        // panel behind the wallpaper and it would stay there, invisible, until
+        // something forced a fresh placement. Leave the z-order alone instead.
+        return panel.hwnd;
     }
     void layout()
     {
@@ -772,7 +825,11 @@ class Application
             }
         }
         r = settleStrip(r);
-        applyGeometry(strip, r, HWND_TOPMOST);
+        const bool freshStrip = !strip.appliedValid;
+        applyGeometry(strip, r);
+        keepStripAbove(freshStrip);
+        if (stripInside != stripPlacedInside || freshStrip)
+            applyBackdrop(strip);
         stripPlacedInside = stripInside;
         visibility();
         layingOut = false;
@@ -926,12 +983,16 @@ class Application
         if (s.dpi < 48)
             s.dpi = 96;
         auto p = palette(s.strip ? shellDark : dark, contrast);
+        // Inside the taskbar the strip draws no background of its own, so the
+        // bar shows through and it reads as part of it rather than as a card
+        // resting on top. Above the taskbar it still needs its own plate.
+        const bool embedded = stripEmbedded(s);
         if (!contrast)
             p.surface.a = s.strip ? .62f : settings.opacity / 100.f;
         if (!s.bitmap.resize(w, h))
             return;
         auto hr = renderer.drawBitmap(s.bitmap, s.dpi, snapshot, p, s.strip, settings.locked, s.scroll,
-                                      settings.range);
+                                      settings.range, embedded);
         if (FAILED(hr))
             return;
         POINT src{};
@@ -1793,15 +1854,20 @@ int renderPreview(const std::filesystem::path &dir)
                         return 3;
                     auto p = palette(dark);
                     p.surface.a = strip ? .62f : opacity / 100.f;
-                    if (FAILED(renderer.drawBitmap(b, 192, snapshot, p, strip, true, 0, range)))
+                    // The strip has two looks: the plate it uses above the
+                    // taskbar, and the embedded one with no background at all.
+                    const bool embedded = strip && opacity != 10;
+                    if (FAILED(renderer.drawBitmap(b, 192, snapshot, p, strip, true, 0, range, embedded)))
                         return 4;
                     auto name = std::wstring(strip ? L"strip-" : L"panel-") + (dark ? L"dark-" : L"light-") +
-                                (range == Range::Minutes ? L"60min-" : L"60sec-") + std::to_wstring(opacity) +
+                                (range == Range::Minutes ? L"60min-" : L"60sec-") +
+                                (strip ? std::wstring(embedded ? L"embedded" : L"plate")
+                                       : std::to_wstring(opacity)) +
                                 L".png";
                     if (!b.save(dir / name))
                         return 5;
-                    if (strip)
-                        break; // the strip keeps its own fixed background
+                    if (strip && opacity != 10)
+                        break; // only the two strip looks, not three opacities
                 }
     return 0;
 }

@@ -49,10 +49,10 @@ class Renderer
         dcTarget_.Reset();
     }
     HRESULT drawBitmap(BitmapSurface &bitmap, float dpi, const Snapshot &s, const Palette &p, bool strip,
-                       bool locked, float scroll = 0, Range range = Range::Seconds);
+                       bool locked, float scroll = 0, Range range = Range::Seconds, bool embedded = false);
     HRESULT drawTarget(ID2D1RenderTarget *target, float width, float height, const Snapshot &s,
                        const Palette &p, bool strip, bool locked, float scroll = 0,
-                       Range range = Range::Seconds);
+                       Range range = Range::Seconds, bool embedded = false);
     std::wstring accessibleText(const Snapshot &s, bool strip, Range range = Range::Seconds) const;
 
   private:

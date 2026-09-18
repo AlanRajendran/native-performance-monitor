@@ -29,35 +29,64 @@ machine, and damp it.
 4. `restack()` — repairs the panel's z-order, rate limited (see below).
 5. Compute the strip rectangle, either inside the taskbar or above it.
 6. `settleStrip()` — damps the horizontal position (see below).
-7. `applyGeometry(strip, rect, HWND_TOPMOST)`.
+7. `applyGeometry(strip, rect)`, then `keepStripAbove()` — re-asserts topmost
+   only when the taskbar is observed to be above the strip.
 8. `visibility()` — show or hide each surface.
 
 A pass is cheap when nothing changed, which is the normal case. That is the
 point: it is safe to run often precisely because it usually does nothing.
 
-## The cached state
+## What may be cached, and what may not
 
-Each `Surface` records what the shell was last told:
+This is the distinction the whole subsystem turns on.
 
-| Field           | Meaning                                              |
-| --------------- | ---------------------------------------------------- |
-| `applied`       | rectangle passed to the last `SetWindowPos`          |
-| `appliedAfter`  | `hWndInsertAfter` passed to the last `SetWindowPos`  |
-| `appliedValid`  | false until the first successful placement           |
-| `appliedText`   | last string written with `SetWindowTextW`            |
+**Position and size may be cached.** Nothing else moves these windows. What was
+last passed to `SetWindowPos` is still true, so comparing against it is sound.
 
-`applyGeometry()` reads these, sets `SWP_NOMOVE | SWP_NOSIZE` when the rectangle
-matches and `SWP_NOZORDER` when the anchor matches, and returns without calling
-anything when both match.
+**Z-order may not be cached.** Any process can restack any window at any time
+without telling us. A remembered anchor says what we last *asked for*, which is
+not evidence of where the window actually sits now. Z-order has to be observed
+on each pass and acted on when it is wrong.
+
+Getting this wrong is not theoretical: 1.4.0 briefly cached the z-order anchor
+alongside the rectangle, and the result was that the surfaces would sink behind
+the wallpaper host or the taskbar and never come back, because the repair that
+would have fixed it was suppressed by a comparison against a stale anchor. The
+symptom was surfaces vanishing until the user toggled them off and on in the
+tray menu — toggling worked only because `ShowWindow` raises a window within its
+band as a side effect.
+
+Each `Surface` therefore records:
+
+| Field          | Meaning                                       |
+| -------------- | --------------------------------------------- |
+| `applied`      | rectangle passed to the last `SetWindowPos`   |
+| `appliedValid` | false until the first successful placement    |
+| `appliedText`  | last string written with `SetWindowTextW`     |
+
+`applyGeometry()` compares against `applied` and returns without calling
+anything when the rectangle still matches. `applyZOrder()` has no cache and
+always calls the shell; its callers are responsible for having just observed
+that the window is in the wrong place:
+
+- **Panel** — `desktopAnchor()` walks the z-order and returns the panel's own
+  handle when it is already sitting correctly, so a stable desktop costs one
+  enumeration and no shell call.
+- **Strip** — `stripBelowTaskbar()` walks upwards from the strip and reports
+  whether `Shell_TrayWnd` is above it, which is the only way it can be hidden.
+
+Both are rate limited by `restackIntervalMs`, which exists solely to bound how
+hard this pushes back when another program is restacking us repeatedly. It does
+not delay the first repair.
 
 A layered window keeps its old bitmap across a resize, so `applyGeometry()`
 repaints when the extent changed. Without that the new area shows stale pixels
 until something else happens to repaint.
 
-## Invalidation, not re-assertion
+## Invalidation
 
-The cache is dropped by `invalidatePlacement()` when the world genuinely
-changed:
+The position cache is dropped by `invalidatePlacement()` when the world
+genuinely changed:
 
 - Explorer restarted (`TaskbarCreated`) — the new taskbar sits above the strip
   and the desktop host is a different window
@@ -65,16 +94,17 @@ changed:
 - lock state changed (`applyMode()`), which changes window styles and z-order band
 - the user issued a command, or finished dragging a surface
 
-This replaced a per-second `SetWindowPos(strip, HWND_TOPMOST, …)`. That call
-re-inserted the strip at the top of the topmost band, on top of `Shell_TrayWnd`,
-once a second forever. Explorer re-asserts the taskbar's position on various
-shell events, and the old event hook accepted `Shell_TrayWnd` events — so the
-two could drive each other. Whether the loop closed depended on the Windows
-build and taskbar configuration, which is exactly the shape of a bug that hits
-some machines and not others.
+1.3.0 instead ran an unconditional per-second
+`SetWindowPos(strip, HWND_TOPMOST, …)`, re-inserting the strip at the top of the
+topmost band on top of `Shell_TrayWnd` forever. Explorer re-asserts the
+taskbar's position on various shell events, and the old event hook accepted
+`Shell_TrayWnd` events, so the two could drive each other. Whether the loop
+closed depended on the Windows build and taskbar configuration, which is exactly
+the shape of a bug that hits some machines and not others.
 
-**Do not add a periodic z-order re-assertion.** If the surfaces end up in the
-wrong band, find the event that put them there and invalidate on it.
+**Do not re-assert z-order on a timer, and do not skip the repair on a cached
+answer.** Observe, then act only when what you can see is wrong. That is the
+only formulation that is both stable and self-healing.
 
 ## The damping constants
 
@@ -82,7 +112,7 @@ All in `Application`, all deliberately generous:
 
 | Constant             | Value  | Protects against                                      |
 | -------------------- | ------ | ----------------------------------------------------- |
-| `restackIntervalMs`  | 2000   | z-order repair thrashing; disruption to other windows |
+| `restackIntervalMs`  | 600    | another program and this one restacking in a loop     |
 | `stripSettleMs`      | 1500   | the strip hopping between taskbar gaps                |
 | `stripRestoreMs`     | 700    | the strip blinking as a window passes over it         |
 | `stripDeadband`      | 12 px  | sub-icon drift in the taskbar layout                  |
@@ -96,8 +126,10 @@ And in `TaskbarObserver`:
 | `minimumIntervalMs` | 2000   | the same, when shell events keep arriving   |
 | `tolerance`         | 6 px   | a clock or weather label reflowing by a pixel |
 
-Lowering any of these makes the surfaces more responsive and less stable. That
-trade has already been made once in the wrong direction.
+Lowering the strip and event constants makes the surfaces more responsive and
+less stable; that trade has already been made once in the wrong direction.
+`restackIntervalMs` is different in kind: it does not delay a repair, it only
+caps how often one can be repeated, so it is safe to keep short.
 
 ## Strip stickiness
 

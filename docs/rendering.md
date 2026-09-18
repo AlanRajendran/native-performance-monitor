@@ -59,8 +59,28 @@ problem.
 Large graphs are drawn on an opaque `p.plot` rectangle. This gives the panel a
 "solid data cards on a translucent sheet" look and, more usefully, guarantees
 the graphs are legible over any wallpaper at any opacity setting. The strip's
-mini-graphs have no card — they get opaque fills and traces on the strip's own
-62% background, which is enough at that size.
+mini-graphs have no card — they get fills and traces on the strip's own
+background, which is enough at that size.
+
+### The strip has two looks
+
+The strip is drawn one of two ways, chosen by `stripEmbedded()`:
+
+**Above the taskbar** it is its own object, so it gets the full treatment: a
+62% plate, a drawn border, rounded corners and cell dividers.
+
+**Inside the taskbar** it must read as taskbar content, not as a card resting on
+the bar. So it draws no plate, no border, no dividers, and its area fills are
+translucent, tinting the bar rather than covering it. Text and traces stay fully
+opaque.
+
+The window frame has to agree with this. `applyBackdrop()` sets
+`DWMWA_WINDOW_CORNER_PREFERENCE` to `DWMWCP_DONOTROUND` when embedded, and turns
+off `DWMWA_BORDER_COLOR` on both surfaces. DWM draws its own hairline border
+around a window, and on the embedded strip that border alone was enough to make
+it look like a floating card even with every drawn outline removed. Because the
+embedded state changes at runtime, `layout()` reapplies the backdrop whenever
+the strip moves in or out of the taskbar.
 
 ### If you add a mark
 

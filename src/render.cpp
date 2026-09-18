@@ -160,7 +160,7 @@ IDWriteTextFormat *Renderer::format(float size, bool strong)
     return f.Get();
 }
 HRESULT Renderer::drawBitmap(BitmapSurface &b, float dpi, const Snapshot &s, const Palette &p, bool strip,
-                             bool locked, float scroll, Range range)
+                             bool locked, float scroll, Range range, bool embedded)
 {
     if (!dcTarget_)
     {
@@ -177,13 +177,13 @@ HRESULT Renderer::drawBitmap(BitmapSurface &b, float dpi, const Snapshot &s, con
         return hr;
     dcTarget_->SetDpi(dpi, dpi);
     hr = drawTarget(dcTarget_.Get(), b.width * 96.f / dpi, b.height * 96.f / dpi, s, p, strip, locked, scroll,
-                    range);
+                    range, embedded);
     if (hr == D2DERR_RECREATE_TARGET)
         dcTarget_.Reset();
     return hr;
 }
 HRESULT Renderer::drawTarget(ID2D1RenderTarget *t, float w, float h, const Snapshot &s, const Palette &p,
-                             bool isStrip, bool locked, float scroll, Range range)
+                             bool isStrip, bool locked, float scroll, Range range, bool embedded)
 {
     ComPtr<ID2D1SolidColorBrush> brush;
     auto hr = t->CreateSolidColorBrush(p.text, &brush);
@@ -247,7 +247,13 @@ HRESULT Renderer::drawTarget(ID2D1RenderTarget *t, float w, float h, const Snaps
                 sink->AddLine({point(end).x, y + height});
                 sink->EndFigure(D2D1_FIGURE_END_CLOSED);
                 sink->Close();
-                set(p.fill[metric]);
+                auto areaFill = p.fill[metric];
+                if (embedded)
+                {
+                    areaFill = p.series[metric];
+                    areaFill.a = p.highContrast ? .10f : .22f;
+                }
+                set(areaFill);
                 t->FillGeometry(path.Get(), brush.Get());
             }
             for (int i = start + 1; i <= end; ++i)
@@ -274,15 +280,21 @@ HRESULT Renderer::drawTarget(ID2D1RenderTarget *t, float w, float h, const Snaps
     t->SetTransform(D2D1::Matrix3x2F::Identity());
     t->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
     t->Clear(D2D1::ColorF(0, 0));
-    // The only mark that carries the user's opacity. Everything drawn after it
-    // is opaque, so content stays readable at any background setting.
-    set(p.surface);
-    t->FillRoundedRectangle(
-        D2D1::RoundedRect(D2D1::RectF(0, 0, w, h), isStrip ? 7.f : 9.f, isStrip ? 7.f : 9.f), brush.Get());
-    set(p.border);
-    t->DrawRoundedRectangle(
-        D2D1::RoundedRect(D2D1::RectF(.5f, .5f, w - .5f, h - .5f), isStrip ? 7.f : 9.f, isStrip ? 7.f : 9.f),
-        brush.Get(), .65f);
+    // Embedded in the taskbar there is no plate, no border and no rounded
+    // corners: the bar's own material is the background, and anything drawn
+    // behind the content would announce the strip as a separate window sitting
+    // on top of it. Everywhere else the surface plate carries the opacity.
+    if (!embedded)
+    {
+        set(p.surface);
+        t->FillRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(0, 0, w, h), isStrip ? 7.f : 9.f, isStrip ? 7.f : 9.f),
+            brush.Get());
+        set(p.border);
+        t->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(.5f, .5f, w - .5f, h - .5f),
+                                                  isStrip ? 7.f : 9.f, isStrip ? 7.f : 9.f),
+                                brush.Get(), .65f);
+    }
     const bool stale = !s.paused && s.updatedMs && GetTickCount64() > s.updatedMs + 4000;
     if (isStrip)
     {
@@ -290,7 +302,7 @@ HRESULT Renderer::drawTarget(ID2D1RenderTarget *t, float w, float h, const Snaps
         for (int i = 0; i < 4; ++i)
         {
             float x = i * w / 4, cell = w / 4;
-            if (i)
+            if (i && !embedded)
                 line(x, 10, x, h - 10, p.border, .65f);
             text(names[i], x + 9, 4, cell - 18, 10, p.muted);
             auto value = s.paused ? L"Ⅱ" : stale ? L"—" : formatPercent(s.current[i]);
