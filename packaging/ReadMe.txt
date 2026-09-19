@@ -1,8 +1,8 @@
-NATIVE PERFORMANCE MONITOR 1.7.0
+NATIVE PERFORMANCE MONITOR 2.0.0
 
 For normal Windows app integration, open Setup.exe in this folder.
 It installs only for your account, adds desktop and Start menu shortcuts,
-and registers Native Performance Monitor 1.7 in Windows Installed Apps.
+and registers Native Performance Monitor 2.0 in Windows Installed Apps.
 Administrator access is not required. The sign-in startup checkbox is optional.
 
 For portable use, open PerfMonitor.exe directly. No shortcuts or Installed Apps
@@ -29,8 +29,8 @@ menu switches every graph between 60 seconds and 60 minutes.
 Windows light/dark theme is automatic. High contrast uses solid system colors.
 
 GB means 1,000,000,000 bytes; MB means 1,000,000 bytes.
-Settings are in %LOCALAPPDATA%\NativePerfMonitor-1.7.
-Installed files are in %LOCALAPPDATA%\Programs\NativePerfMonitor-1.7.
+Settings are in %LOCALAPPDATA%\NativePerfMonitor-2.0.
+Installed files are in %LOCALAPPDATA%\Programs\NativePerfMonitor-2.0.
 Earlier versions are kept, and their settings are imported on first run. Exit
 an older monitor before running this version, and remove it from Installed apps
 once this one is set up so its shortcuts cannot start the old build.

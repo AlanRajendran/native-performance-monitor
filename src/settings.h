@@ -4,7 +4,7 @@
 #include <windows.h>
 namespace perf
 {
-inline constexpr wchar_t applicationId[] = L"NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.7";
+inline constexpr wchar_t applicationId[] = L"NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v2.0";
 struct Settings
 {
     bool panel = true, strip = true, locked = true, compact = false;

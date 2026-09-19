@@ -23,9 +23,9 @@ using namespace perf;
 using Microsoft::WRL::ComPtr;
 namespace
 {
-constexpr wchar_t controlClass[] = L"NativePerfMonitor.Controller.1.7";
-constexpr wchar_t surfaceClass[] = L"NativePerfMonitor.Surface.1.7";
-constexpr wchar_t probeClass[] = L"NativePerfMonitor.Probe.1.7";
+constexpr wchar_t controlClass[] = L"NativePerfMonitor.Controller.2.0";
+constexpr wchar_t surfaceClass[] = L"NativePerfMonitor.Surface.2.0";
+constexpr wchar_t probeClass[] = L"NativePerfMonitor.Probe.2.0";
 constexpr UINT sampleMessage = WM_APP + 1, themeMessage = WM_APP + 2, geometryMessage = WM_APP + 3,
                restoreMessage = WM_APP + 4, taskbarLayoutMessage = WM_APP + 5, desktopMessage = WM_APP + 6,
                stripMovedMessage = WM_APP + 7, stripMenuMessage = WM_APP + 8, stripClosedMessage = WM_APP + 9;
@@ -256,8 +256,8 @@ class Application
     }
     bool initialize()
     {
-        stopMessage = RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.7");
-        singleton = CreateMutexW(nullptr, FALSE, L"Local\\NativePerfMonitor.6D845648.v1.7");
+        stopMessage = RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v2.0");
+        singleton = CreateMutexW(nullptr, FALSE, L"Local\\NativePerfMonitor.6D845648.v2.0");
         if (GetLastError() == ERROR_ALREADY_EXISTS)
         {
             auto existing = FindWindowW(controlClass, nullptr);
@@ -1218,7 +1218,7 @@ class Application
         WNDCLASSEXW c{sizeof(c)};
         c.hInstance = instance;
         c.lpfnWndProc = opacityProc;
-        c.lpszClassName = L"NativePerfMonitor.Opacity.1.7";
+        c.lpszClassName = L"NativePerfMonitor.Opacity.2.0";
         c.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         RegisterClassExW(&c);
         auto area = primaryInfo().rcWork;
@@ -1860,6 +1860,21 @@ int renderPreview(const std::filesystem::path &dir)
         if (!b.save(dir / (std::wstring(L"panel-wide-") + (dark ? L"dark" : L"light") + L".png")))
             return 5;
     }
+    // The README figure: the wide panel as most people would set it, and the
+    // strip as drawn inside a dark taskbar.
+    {
+        BitmapSurface panel, strip;
+        auto p = palette(true);
+        p.surface.a = .82f;
+        if (!panel.resize(1800, 1520) || !strip.resize(688, 84))
+            return 3;
+        if (FAILED(renderer.drawBitmap(panel, 192, snapshot, p, false, true)) ||
+            FAILED(renderer.drawBitmap(strip, 192, snapshot, palette(true), true, true, 0, Range::Seconds,
+                                       true)))
+            return 4;
+        if (!panel.save(dir / L"readme-panel.png") || !strip.save(dir / L"readme-strip.png"))
+            return 5;
+    }
     return 0;
 }
 } // namespace
@@ -1871,7 +1886,7 @@ int WINAPI wWinMain(HINSTANCE h, HINSTANCE, PWSTR, int)
     {
         auto existing = FindWindowW(controlClass, nullptr);
         if (existing)
-            PostMessageW(existing, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.7"), 0, 0);
+            PostMessageW(existing, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v2.0"), 0, 0);
         if (options.prepare)
         {
             std::wstring error;

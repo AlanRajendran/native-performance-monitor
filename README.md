@@ -1,51 +1,121 @@
-# Native Performance Monitor 1.7.0
+# Native Performance Monitor
 
-A lightweight native Windows 11 x64 performance monitor with ring gauges, heat maps of CPU cores and GPU engines, RAM and VRAM by application, a desktop panel and an optional taskbar strip. One monitoring process uses Win32, Direct2D/DirectWrite, DWM, DXGI and user-mode Windows performance counters. No service, browser engine, kernel driver or Explorer injection.
+A lightweight performance monitor for Windows 11 that lives on your desktop and
+in your taskbar. It shows CPU cores, GPU engines, and who is holding your RAM
+and VRAM, second by second, using about 0.15% of the processor.
 
-## Install or run portably
+![The desktop panel in its two-column layout, with the taskbar strip below](docs/images/overview.png)
 
-Extract the full ZIP into a new folder. **Setup.exe**, **PerfMonitor.exe** and **Uninstall.exe** are visible directly in that folder.
+*Sample data. The panel sits on the desktop below your windows; the strip sits
+inside the taskbar.*
 
-Open **Setup.exe** for normal Windows integration. It installs to `%LOCALAPPDATA%\Programs\NativePerfMonitor-1.7`, creates desktop and Start menu shortcuts, and registers **Native Performance Monitor 1.7** in Windows Settings > Apps > Installed apps. It installs alongside earlier versions rather than replacing them and brings their settings across on first run; remove the earlier version from Windows Installed apps once 1.7 is set up, so its shortcuts cannot launch the old build. Installation is per user and needs no administrator privileges. The optional sign-in startup checkbox is off by default.
+Native Win32 and Direct2D. No service, driver, browser engine, Explorer
+add-in or network access.
 
-For portable use, open **PerfMonitor.exe** directly. Keep all seven files together. Portable operation creates no shortcuts or Installed Apps registration. Exit an older running monitor before launching this version. Earlier versions remain unchanged. This is an unsigned local build with a static C++ runtime.
+## What it shows
 
-## Controls and appearance
+**Desktop panel**
 
-Right-click the notification-area icon, which may be in the overflow menu. Choose **Panel opacity…** for a continuous native slider from **10% to 100% (opaque)**. Changes apply live and persist; arrow keys adjust one percent.
+| Section | What you see |
+|---|---|
+| Gauges | CPU, GPU and memory load right now, with the processor, graphics card and memory size underneath. |
+| Cores | One row per physical core, performance cores first, one cell per sample. Colour is load: idle is dark, busy runs to your Windows accent colour. |
+| GPU engines | The same heat rows for each kind of work the graphics card is doing: 3D, Copy, Video encode, Video decode, Optical flow (frame generation), JPEG decode. |
+| RAM | Who held memory over time (the three busiest apps, Windows and other apps, cache, free), the same split right now as blocks, and each holder's change. A **Paging** row shows when Windows has to read memory back from disk. |
+| VRAM | The same, for the graphics card's memory. |
+| Working hardest | The three busiest apps with CPU, GPU, VRAM and RAM side by side. |
 
-Opacity applies to the panel background only. Text, gauges, heat cells and meters are always fully opaque, so content stays readable at any setting and over any wallpaper. The taskbar strip keeps its own fixed readable background. Both surfaces follow Windows light/dark settings; high contrast uses solid system colors.
+Every section shares one grid, so a moment in time lines up down the whole
+panel. **History** switches everything between the last 60 seconds and the last
+60 minutes. Wider than 860 pixels, the panel lays out in two columns.
 
-**History** switches every graph between **60 seconds** and **60 minutes**. The hour view shows one-minute averages and covers both the panel and the strip. Both ranges are recorded continuously, so switching is instant and nothing is lost either way; after a fresh start the hour view fills in over the first hour.
+**Taskbar strip**
 
-The desktop panel starts locked and click-through, sitting in the desktop layer: above the wallpaper, below every application window, like a desktop widget. While locked it refuses to be brought forward or pushed back by anything, which is what keeps it stable. During Show Desktop (Win+D or the far right of the taskbar) it stays visible, and it returns to the desktop layer when your windows come back. Unlock it to move, resize or scroll it like an ordinary window. Explicitly hiding it in the tray menu is respected. Sampling continues while covered or hidden. Pause and Exit remain explicit controls.
+![The taskbar strip](docs/images/strip.png)
 
-**Taskbar strip** is on by default. **Prefer inside taskbar** uses reliable free space between existing controls; otherwise the strip appears immediately above the taskbar. Inside the taskbar the strip is owned by the taskbar window, so clicking the taskbar never covers it, and it is drawn without a background so it reads as part of the bar. It stays in the slot it occupies and only moves when that slot is genuinely taken. Full-screen applications and an auto-hidden bar temporarily hide it. The strip is a separate window, not an Explorer extension; turning **Prefer inside taskbar** off stops the monitor reading the taskbar layout at all.
+CPU with one bar per core, then GPU, VRAM and RAM as meters. Inside the taskbar
+it draws no background of its own, so it reads as part of the bar.
 
-## Readings
+Both follow Windows light and dark mode; high contrast uses system colours.
+Text and graphs stay fully opaque whatever the panel's background opacity.
 
-CPU total and physical cores, GPU, dedicated VRAM and RAM are sampled once per second and kept for both 60 seconds and 60 minutes. Five grouped application rows refresh every two seconds. Core labels follow Windows efficiency classes: P/E for two classes, generic cores for homogeneous CPUs, explicit class numbers for more classes. SMT siblings are averaged only when all have valid readings.
+## Light by design
 
-CPU is busy time calculated from valid idle counters and may differ from Task Manager frequency-adjusted utilization. GPU is the busiest engine on the selected adapter; dedicated VRAM excludes shared system memory. **GB = 1,000,000,000 bytes** and **MB = 1,000,000 bytes**, calculated from byte counters. Missing values remain dashes and history gaps.
+Measured over two minutes with the panel and strip showing: **0.15% of total
+CPU** (about 2% of one core) and **46 MB** of memory. The graphics card does no
+work for it beyond Windows putting the window on screen.
 
-Applications are grouped by normalized executable path; base Windows processes are excluded from ranking but included in overall graphs. Ranking uses the largest CPU, GPU, dedicated-memory or physical-memory share. Table RAM is private resident working set. Process GPU allocations may overlap, so rows need not sum to adapter usage. Linked GPU nodes beyond node zero are unsupported.
+- The screen is updated once a second and never animates.
+- Everything that rarely changes is drawn once and reused; each second only
+  the readings, gauge arcs and heat images are redrawn.
+- Heat maps and memory bars are drawn as one image per section, not thousands
+  of shapes.
+- Nothing is drawn while the panel is hidden or a full-screen app is running.
+- The NVIDIA **memory bus** row is off by default: the library behind it costs
+  about 20 MB. Turn it on from the tray menu if you want it.
 
-## Settings and removal
+## Install
 
-Settings are isolated in `%LOCALAPPDATA%\NativePerfMonitor-1.7`. Optional startup uses the current user's `NativePerfMonitor-1.7` Run value. On first run 1.7 imports the most recent earlier version's settings, reading them without changing them. Installation does not change system security, theme or taskbar settings.
+Build the package (see [Build from source](#build-from-source)), then open the
+`NativePerfMonitor-2.0.0` folder or its ZIP.
 
-Remove the installed copy through Windows Installed apps or its **Uninstall.exe**. The native launcher confirms removal and briefly starts an embedded cleanup script through built-in Windows PowerShell so both executables can be deleted. Cleanup checks identity, executable metadata, paths and ownership; it removes exact owned files, matching shortcuts, the matching Installed Apps entry and optional startup registration. Unrelated files and earlier versions remain. Removing a portable copy does not delete another registered installation's settings. No helper stays running.
+- **Setup.exe** installs for the current user, no administrator rights needed:
+  files go to `%LOCALAPPDATA%\Programs\NativePerfMonitor-2.0`, with desktop and
+  Start menu shortcuts and an entry in **Settings › Apps › Installed apps**.
+- **PerfMonitor.exe** runs it portably from the folder, with no shortcuts or
+  registration.
+- **Uninstall.exe**, or Installed apps, removes it. Removal only touches files
+  and entries that this version created.
 
-## Build and validation
+Each version installs side by side with earlier ones and brings their settings
+across on first run. Settings live in `%LOCALAPPDATA%\NativePerfMonitor-2.0`.
 
-Requires Visual Studio 2022 Desktop development with C++, a Windows 11 SDK and CMake 3.24+. No third-party monitoring package is needed.
+## Using it
+
+Right-click the tray icon (it may be in the overflow area).
+
+| Menu item | Does |
+|---|---|
+| Desktop panel / Taskbar strip | Show or hide each surface. |
+| Lock panel | Locked, the panel is click-through and stays in the desktop layer. Unlock to move or resize it. |
+| Prefer inside taskbar | Fit the strip into free taskbar space; otherwise it sits just above the taskbar. |
+| Panel opacity… | Background opacity from 10% to 100%. |
+| Size, Reset positions | Preset panel sizes; put both surfaces back where they started. |
+| GPU | Which graphics card to monitor. |
+| History | 60 seconds or 60 minutes. |
+| NVIDIA memory bus | The optional memory bus row (NVIDIA cards). |
+| Start with Windows, Pause monitoring | As named. |
+| Record placement trace | Writes a log of window placement for bug reports. |
+
+## What the numbers mean
+
+- **CPU** is busy time from Windows' idle counters; it can differ slightly from
+  Task Manager, which adjusts for clock speed.
+- **GPU** is the busiest engine on the selected card. **VRAM** is dedicated
+  memory only.
+- **App RAM** is each app's private working set; memory apps share is counted
+  under "Windows, others". **Cache** is memory Windows hands back the moment an
+  app needs it.
+- **Paging** is data read back from disk to satisfy memory, in MB per second.
+- GB and MB are decimal: 1 GB = 1,000,000,000 bytes.
+
+## Privacy
+
+The monitor reads Windows performance counters and nothing else. It never
+connects to the network, has no telemetry, needs no administrator rights and
+installs no service or driver. Settings are one small local file.
+
+## Build from source
+
+Needs Visual Studio 2022 with *Desktop development with C++*, a Windows 11 SDK
+and CMake 3.24 or later. No third-party packages.
 
 ```powershell
-.\scripts\Build.ps1
-.\scripts\CreatePackage.ps1
+.\scripts\Build.ps1          # configure, build and run every test
+.\scripts\CreatePackage.ps1  # the ready-to-run folder and ZIP in release\
 ```
 
-Or directly with CMake:
+Or with CMake directly:
 
 ```powershell
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
@@ -53,23 +123,27 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-Tests cover calculations, topology, units, premultiplied rendering at 100/125/150/200% DPI, native window behavior, live opacity slider values and keyboard steps, taskbar visibility, background recovery, shortcuts, installed-app registration, startup regression and guarded removal. Window tests require an interactive Explorer desktop and report a skip if unavailable. Installation tests use disposable folders and isolated registry locations; no normal startup entry is modified.
+The tests cover the calculations, rendering at 100–200% scaling, real window
+behaviour on the desktop and taskbar, installation, and guarded removal. Window
+tests need an interactive desktop and refuse to run while a copy of the monitor
+is open. `PerfMonitor.exe --render-preview <folder>` renders every theme,
+layout and range from sample data, which is how the figures above are made.
 
-Window tests refuse to run while a monitor instance is live, so they cannot interrupt a copy you are using; exit it before a full test run.
+## Versions
+
+Versions follow `major.minor.patch`, and every release is a git tag. The
+[changelog](CHANGELOG.md) lists each version's changes under **Added**,
+**Changed**, **Fixed** and **Removed**. The current release is **2.0.0**.
 
 ## Documentation
 
-| Document | Contents |
-| --- | --- |
-| [docs/architecture.md](docs/architecture.md) | processes, threads, data flow, what is deliberately not done |
-| [docs/placement.md](docs/placement.md) | window placement rules — read this before changing placement |
-| [docs/rendering.md](docs/rendering.md) | drawing pipeline, the transparency rule, history ranges |
-| [docs/troubleshooting.md](docs/troubleshooting.md) | symptoms and their causes |
-| [docs/repository-layout.md](docs/repository-layout.md) | where everything lives and how to build it |
-| [docs/history/](docs/history/) | per-version architecture and validation reports |
+- [Architecture](docs/architecture.md): threads, data flow, the two surfaces
+- [Placement](docs/placement.md): how the panel and strip stay put; read this
+  before changing window code
+- [Rendering](docs/rendering.md): drawing, transparency, the grid, drawing cost
+- [Troubleshooting](docs/troubleshooting.md)
+- [Repository layout](docs/repository-layout.md)
 
-`docs/history/validation-1.3.0.md` holds measured results for 1.3.0. Historical reports describe their named versions only.
+## License
 
-If something misbehaves, choose **Record placement trace** in the tray menu, reproduce the problem and choose it again; `trace.log` in the settings folder records every placement action and why. See [docs/troubleshooting.md](docs/troubleshooting.md).
-
-Developer options: `--trace` records the placement trace from launch; `--data-dir PATH` isolates settings and disables startup changes; `--benchmark 180 --warmup 30 --report PATH` measures then exits; `--render-preview PATH` exports illustrative native graphics. Setup accepts `--install-no-launch` for an explicitly requested unattended per-user installation without enabling startup. Normal users should open Setup.exe interactively.
+[MIT](LICENSE.txt)

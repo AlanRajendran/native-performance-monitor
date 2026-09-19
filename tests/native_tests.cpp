@@ -64,11 +64,11 @@ int wmain(int argc, wchar_t **argv)
             // once, reading them without touching the previous line's files.
             auto lines = root / L"lines";
             std::filesystem::remove_all(lines);
-            auto previous = lines / L"NativePerfMonitor-1.6", current = lines / L"NativePerfMonitor-1.7";
+            auto previous = lines / L"NativePerfMonitor-1.7", current = lines / L"NativePerfMonitor-2.0";
             std::filesystem::create_directories(previous);
             {
                 std::ofstream marker(previous / L".nativeperf-settings");
-                marker << "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.6\n";
+                marker << "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.7\n";
                 std::ofstream ini(previous / L"settings.ini");
                 ini << "opacity=37\nlongRange=1\nstripX=812\n";
             }

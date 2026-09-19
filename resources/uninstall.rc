@@ -14,12 +14,12 @@ BEGIN
   BLOCK "040904B0"
   BEGIN
    VALUE "CompanyName", "NativePerfMonitor Project"
-   VALUE "FileDescription", "Uninstall Native Performance Monitor 1.7"
-   VALUE "FileVersion", "1.7.0"
+   VALUE "FileDescription", "Uninstall Native Performance Monitor 2.0"
+   VALUE "FileVersion", "2.0.0"
    VALUE "InternalName", "Uninstall"
    VALUE "OriginalFilename", "Uninstall.exe"
    VALUE "ProductName", "NativePerfMonitor"
-   VALUE "ProductVersion", "1.7.0"
+   VALUE "ProductVersion", "2.0.0"
   END
  END
  BLOCK "VarFileInfo"

@@ -15,12 +15,13 @@
 │   ├── placement.md          window placement rules — read before touching it
 │   ├── rendering.md          drawing pipeline, transparency, history ranges
 │   ├── troubleshooting.md    symptoms and what causes them
+│   ├── images/               figures used by the README
 │   ├── design/               design brief and fixtures
-│   └── history/              per-version architecture, validation, release notes
-└── artifacts/                not source; kept for reference
-    ├── releases/             shipped ZIPs and checksums
-    ├── benchmarks/           benchmark runs
-    └── screenshots/          rendered previews
+│   └── history/              per-version architecture and validation notes
+├── build/                    CMake output (ignored)
+├── release/                  the current packaged build (ignored)
+└── archive/                  earlier builds, zips, benchmarks, screenshots;
+                              kept locally, never uploaded (ignored)
 ```
 
 ## Source files
