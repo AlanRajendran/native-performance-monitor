@@ -1,5 +1,37 @@
 # Changes
 
+## 1.6.0
+
+A new look, chosen from five designs.
+
+### Desktop panel
+
+- **Gauges for CPU, GPU and memory.** A ring for each shows the current load,
+  with the processor model, graphics card or memory used underneath. Under
+  every ring, a strip of heat cells shows the selected history range.
+- **Cores as a heat map instead of line graphs.** One row per physical core,
+  one cell per sample, performance cores then efficiency cores. Load shows as
+  colour, so which cores are busy and when can be read at a glance, and the
+  map stays compact on CPUs with many cores.
+- **Peaks use the Windows accent colour.** The heat map, gauges and highlights
+  take the accent from Windows, which follows the wallpaper when the accent is
+  set to Automatic. It updates as soon as the accent changes.
+- **Working hardest** replaces the application table: the four busiest apps
+  with their CPU, GPU, VRAM and RAM side by side, and the largest share of its
+  capacity highlighted.
+- The default panel is now 450 × 760.
+
+### Taskbar strip
+
+- Fixed-width readings. CPU shows one bar per physical core; GPU, VRAM and
+  RAM show a twelve-step meter in the accent colour.
+
+### Release line
+
+- Installs as its own line (`NativePerfMonitor-1.6`) beside earlier versions
+  and imports the 1.5 settings on first run.
+
+
 ## 1.5.0
 
 A redesign of how the panel and strip stay in place, after 1.4 still flickered

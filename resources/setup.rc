@@ -14,12 +14,12 @@ BEGIN
   BLOCK "040904B0"
   BEGIN
    VALUE "CompanyName", "NativePerfMonitor Project"
-   VALUE "FileDescription", "Install Native Performance Monitor 1.5"
-   VALUE "FileVersion", "1.5.0"
+   VALUE "FileDescription", "Install Native Performance Monitor 1.6"
+   VALUE "FileVersion", "1.6.0"
    VALUE "InternalName", "Setup"
    VALUE "OriginalFilename", "Setup.exe"
    VALUE "ProductName", "NativePerfMonitor"
-   VALUE "ProductVersion", "1.5.0"
+   VALUE "ProductVersion", "1.6.0"
   END
  END
  BLOCK "VarFileInfo"

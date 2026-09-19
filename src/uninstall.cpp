@@ -54,11 +54,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int)
         return 2;
     if (!yes)
     {
-        auto message = L"Remove Native Performance Monitor 1.5 from:\n\n" + folder.wstring() +
+        auto message = L"Remove Native Performance Monitor 1.6 from:\n\n" + folder.wstring() +
                        L"\n\nThis removes this copy's program files, settings and matching optional startup "
                        L"entry, owned shortcuts and Installed Apps registration. Earlier versions and "
                        L"unrelated files are kept.";
-        if (MessageBoxW(nullptr, message.c_str(), L"Uninstall Native Performance Monitor 1.5",
+        if (MessageBoxW(nullptr, message.c_str(), L"Uninstall Native Performance Monitor 1.6",
                         MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
             return 0;
     }

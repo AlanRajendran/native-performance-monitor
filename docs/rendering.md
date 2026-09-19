@@ -54,13 +54,23 @@ wallpaper exactly as the user turned the background down — the opposite of wha
 the setting is for. Text and traces were already at `a = 1` and were never the
 problem.
 
-### Plot cards
+### Gauges, heat and the accent colour
 
-Large graphs are drawn on an opaque `p.plot` rectangle. This gives the panel a
-"solid data cards on a translucent sheet" look and, more usefully, guarantees
-the graphs are legible over any wallpaper at any opacity setting. The strip's
-mini-graphs have no card — they get fills and traces on the strip's own
-background, which is enough at that size.
+Since 1.6 the panel has no line graphs. Current load is a ring gauge on an
+opaque `p.plot` track; history is heat: one opaque cell per sample, coloured
+from `p.heatBase` (idle) through `p.accent` to `p.glow` (the top 15%). Every
+cell is a solid colour, so the transparency rule holds.
+
+`p.accent` comes from `HKCU\...\Explorer\Accent\AccentPalette`, the eight
+shades Windows derives from the accent (and so from the wallpaper when the
+accent is Automatic). Dark themes use Light2, light themes Dark1, the same
+shades Windows uses on those backgrounds. `palette()` reads it on every call
+and the panel repaints on `WM_DWMCOLORIZATIONCOLORCHANGED`, so an accent change
+shows at once. High contrast replaces all of it with system colours.
+
+The strip draws fixed-width readings (Cascadia Mono, falling back to Consolas),
+per-core bars for CPU and twelve-segment meters for the rest; unlit segments
+use the opaque `p.off`.
 
 ### The strip has two looks
 

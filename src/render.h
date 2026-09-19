@@ -3,6 +3,7 @@
 #include <d2d1.h>
 #include <dwrite.h>
 #include <filesystem>
+#include <tuple>
 #include <wrl/client.h>
 
 namespace perf
@@ -15,6 +16,10 @@ struct Palette
 {
     D2D1_COLOR_F surface, plot, text, muted, border, grid;
     std::array<D2D1_COLOR_F, 4> series, fill;
+    // `accent` is the Windows accent shade for this theme. Heat runs from
+    // `heatBase` (idle) through `accent` to `glow` (peak); `off` is an unlit
+    // meter segment on the taskbar.
+    D2D1_COLOR_F accent, glow, heatBase, off;
     bool highContrast = false;
 };
 Palette palette(bool dark, bool highContrast = false);
@@ -35,7 +40,9 @@ class Renderer
     Microsoft::WRL::ComPtr<ID2D1Factory> factory_;
     Microsoft::WRL::ComPtr<IDWriteFactory> textFactory_;
     Microsoft::WRL::ComPtr<ID2D1DCRenderTarget> dcTarget_;
-    std::map<std::pair<int, bool>, Microsoft::WRL::ComPtr<IDWriteTextFormat>> formats_;
+    std::map<std::tuple<int, int, bool>, Microsoft::WRL::ComPtr<IDWriteTextFormat>> formats_;
+    Microsoft::WRL::ComPtr<ID2D1StrokeStyle> roundCap_;
+    std::wstring text_ = L"Segoe UI", display_ = L"Segoe UI", mono_ = L"Consolas";
     Microsoft::WRL::ComPtr<IDWriteInlineObject> ellipsis_;
 
   public:
@@ -56,7 +63,10 @@ class Renderer
     std::wstring accessibleText(const Snapshot &s, bool strip, Range range = Range::Seconds) const;
 
   private:
-    IDWriteTextFormat *format(float size, bool strong = false);
+    IDWriteTextFormat *format(float size, DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL,
+                              bool mono = false);
+    float measure(const std::wstring &text, float size, DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL,
+                  bool mono = false);
 };
 Snapshot demonstrationSnapshot();
 } // namespace perf

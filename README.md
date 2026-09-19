@@ -1,12 +1,12 @@
-# Native Performance Monitor 1.5.0
+# Native Performance Monitor 1.6.0
 
-A lightweight native Windows 11 x64 performance monitor with compact physical-core graphs, a desktop panel and an optional taskbar strip. One monitoring process uses Win32, Direct2D/DirectWrite, DWM, DXGI and user-mode Windows performance counters. No service, browser engine, kernel driver or Explorer injection.
+A lightweight native Windows 11 x64 performance monitor with ring gauges, a per-core heat map, a desktop panel and an optional taskbar strip. One monitoring process uses Win32, Direct2D/DirectWrite, DWM, DXGI and user-mode Windows performance counters. No service, browser engine, kernel driver or Explorer injection.
 
 ## Install or run portably
 
 Extract the full ZIP into a new folder. **Setup.exe**, **PerfMonitor.exe** and **Uninstall.exe** are visible directly in that folder.
 
-Open **Setup.exe** for normal Windows integration. It installs to `%LOCALAPPDATA%\Programs\NativePerfMonitor-1.5`, creates desktop and Start menu shortcuts, and registers **Native Performance Monitor 1.5** in Windows Settings > Apps > Installed apps. It installs alongside earlier versions rather than replacing them and brings their settings across on first run; remove the earlier version from Windows Installed apps once 1.5 is set up, so its shortcuts cannot launch the old build. Installation is per user and needs no administrator privileges. The optional sign-in startup checkbox is off by default.
+Open **Setup.exe** for normal Windows integration. It installs to `%LOCALAPPDATA%\Programs\NativePerfMonitor-1.6`, creates desktop and Start menu shortcuts, and registers **Native Performance Monitor 1.6** in Windows Settings > Apps > Installed apps. It installs alongside earlier versions rather than replacing them and brings their settings across on first run; remove the earlier version from Windows Installed apps once 1.6 is set up, so its shortcuts cannot launch the old build. Installation is per user and needs no administrator privileges. The optional sign-in startup checkbox is off by default.
 
 For portable use, open **PerfMonitor.exe** directly. Keep all seven files together. Portable operation creates no shortcuts or Installed Apps registration. Exit an older running monitor before launching this version. Earlier versions remain unchanged. This is an unsigned local build with a static C++ runtime.
 
@@ -14,7 +14,7 @@ For portable use, open **PerfMonitor.exe** directly. Keep all seven files togeth
 
 Right-click the notification-area icon, which may be in the overflow menu. Choose **Panel opacity…** for a continuous native slider from **10% to 100% (opaque)**. Changes apply live and persist; arrow keys adjust one percent.
 
-Opacity applies to the panel background only. Text, traces, grids and the graph cards are always fully opaque, so content stays readable at any setting and over any wallpaper. The taskbar strip keeps its own fixed readable background. Both surfaces follow Windows light/dark settings; high contrast uses solid system colors.
+Opacity applies to the panel background only. Text, gauges, heat cells and meters are always fully opaque, so content stays readable at any setting and over any wallpaper. The taskbar strip keeps its own fixed readable background. Both surfaces follow Windows light/dark settings; high contrast uses solid system colors.
 
 **History** switches every graph between **60 seconds** and **60 minutes**. The hour view shows one-minute averages and covers both the panel and the strip. Both ranges are recorded continuously, so switching is instant and nothing is lost either way; after a fresh start the hour view fills in over the first hour.
 
@@ -32,7 +32,7 @@ Applications are grouped by normalized executable path; base Windows processes a
 
 ## Settings and removal
 
-Settings are isolated in `%LOCALAPPDATA%\NativePerfMonitor-1.5`. Optional startup uses the current user's `NativePerfMonitor-1.5` Run value. On first run 1.5 imports the most recent earlier version's settings, reading them without changing them. Installation does not change system security, theme or taskbar settings.
+Settings are isolated in `%LOCALAPPDATA%\NativePerfMonitor-1.6`. Optional startup uses the current user's `NativePerfMonitor-1.6` Run value. On first run 1.6 imports the most recent earlier version's settings, reading them without changing them. Installation does not change system security, theme or taskbar settings.
 
 Remove the installed copy through Windows Installed apps or its **Uninstall.exe**. The native launcher confirms removal and briefly starts an embedded cleanup script through built-in Windows PowerShell so both executables can be deleted. Cleanup checks identity, executable metadata, paths and ownership; it removes exact owned files, matching shortcuts, the matching Installed Apps entry and optional startup registration. Unrelated files and earlier versions remain. Removing a portable copy does not delete another registered installation's settings. No helper stays running.
 

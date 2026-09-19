@@ -60,7 +60,7 @@ struct StripEvents
 class StripHost
 {
   public:
-    static constexpr wchar_t windowClass[] = L"NativePerfMonitor.Strip.1.5";
+    static constexpr wchar_t windowClass[] = L"NativePerfMonitor.Strip.1.6";
 
     StripHost() = default;
     StripHost(const StripHost &) = delete;

@@ -22,7 +22,7 @@ std::filesystem::path defaultDataDirectory()
         out = p;
         CoTaskMemFree(p);
     }
-    return out / L"NativePerfMonitor-1.5";
+    return out / L"NativePerfMonitor-1.6";
 }
 bool hasReparseAncestor(const std::filesystem::path &value)
 {
@@ -42,7 +42,7 @@ bool hasReparseAncestor(const std::filesystem::path &value)
     }
     return false;
 }
-static constexpr char currentOwner[] = "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.5";
+static constexpr char currentOwner[] = "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.6";
 static bool ownedData(const std::filesystem::path &dir, const char *owner = currentOwner)
 {
     auto marker = dir / L".nativeperf-settings";
@@ -132,6 +132,7 @@ bool importPreviousSettings(const std::filesystem::path &dir, Settings &out)
         const wchar_t *folder;
         const char *owner;
     } previous[] = {
+        {L"NativePerfMonitor-1.5", "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.5"},
         {L"NativePerfMonitor-1.4", "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.4"},
         {L"NativePerfMonitor-1.3", "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.3"},
     };
@@ -218,7 +219,7 @@ static std::wstring readStartup()
 {
     wchar_t value[2048]{};
     DWORD bytes = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER, runKey, L"NativePerfMonitor-1.5", RRF_RT_REG_SZ, nullptr, value,
+    if (RegGetValueW(HKEY_CURRENT_USER, runKey, L"NativePerfMonitor-1.6", RRF_RT_REG_SZ, nullptr, value,
                      &bytes) != ERROR_SUCCESS)
         return {};
     return value;
@@ -249,10 +250,10 @@ bool setStartup(const std::filesystem::path &exe, bool enabled, std::wstring &er
         RegCreateKeyExW(HKEY_CURRENT_USER, runKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
     if (st == ERROR_SUCCESS)
     {
-        st = enabled ? RegSetValueExW(key, L"NativePerfMonitor-1.5", 0, REG_SZ,
+        st = enabled ? RegSetValueExW(key, L"NativePerfMonitor-1.6", 0, REG_SZ,
                                       reinterpret_cast<const BYTE *>(expected.c_str()),
                                       DWORD((expected.size() + 1) * sizeof(wchar_t)))
-                     : RegDeleteValueW(key, L"NativePerfMonitor-1.5");
+                     : RegDeleteValueW(key, L"NativePerfMonitor-1.6");
         RegCloseKey(key);
     }
     if (st != ERROR_SUCCESS && st != ERROR_FILE_NOT_FOUND)

@@ -112,6 +112,11 @@ float panelContentHeight(const std::vector<CpuCore> &cores)
     std::set<unsigned> groups;
     for (auto &c : cores)
         groups.insert(c.efficiencyClass);
-    return 500.f + float(cores.size()) * 24.f + float(groups.size()) * 22.f;
+    // Mirrors the panel layout in render.cpp: fixed sections plus one heat row
+    // per core, with a small gap between core types.
+    if (cores.empty())
+        return 565.f;
+    const float pitch = cores.size() > 24 ? 8.f : 12.f, kinds = float(groups.size());
+    return 541.f + float(cores.size()) * pitch - 2.f * kinds + 10.f * (kinds - 1);
 }
 } // namespace perf

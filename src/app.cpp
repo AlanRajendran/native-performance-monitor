@@ -23,9 +23,9 @@ using namespace perf;
 using Microsoft::WRL::ComPtr;
 namespace
 {
-constexpr wchar_t controlClass[] = L"NativePerfMonitor.Controller.1.5";
-constexpr wchar_t surfaceClass[] = L"NativePerfMonitor.Surface.1.5";
-constexpr wchar_t probeClass[] = L"NativePerfMonitor.Probe.1.5";
+constexpr wchar_t controlClass[] = L"NativePerfMonitor.Controller.1.6";
+constexpr wchar_t surfaceClass[] = L"NativePerfMonitor.Surface.1.6";
+constexpr wchar_t probeClass[] = L"NativePerfMonitor.Probe.1.6";
 constexpr UINT sampleMessage = WM_APP + 1, themeMessage = WM_APP + 2, geometryMessage = WM_APP + 3,
                restoreMessage = WM_APP + 4, taskbarLayoutMessage = WM_APP + 5, desktopMessage = WM_APP + 6,
                stripMovedMessage = WM_APP + 7, stripMenuMessage = WM_APP + 8, stripClosedMessage = WM_APP + 9;
@@ -255,8 +255,8 @@ class Application
     }
     bool initialize()
     {
-        stopMessage = RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.5");
-        singleton = CreateMutexW(nullptr, FALSE, L"Local\\NativePerfMonitor.6D845648.v1.5");
+        stopMessage = RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.6");
+        singleton = CreateMutexW(nullptr, FALSE, L"Local\\NativePerfMonitor.6D845648.v1.6");
         if (GetLastError() == ERROR_ALREADY_EXISTS)
         {
             auto existing = FindWindowW(controlClass, nullptr);
@@ -291,7 +291,7 @@ class Application
             return false;
         DWORD ex = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT;
         panel.hwnd = CreateWindowExW(ex, surfaceClass, L"Performance monitor desktop", WS_POPUP, 0, 0, 450,
-                                     880, nullptr, nullptr, instance, &panel);
+                                     760, nullptr, nullptr, instance, &panel);
         // Never shown: it exists only to be found above or below the desktop host.
         probe = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, probeClass, L"", WS_POPUP | WS_DISABLED,
                                 0, 0, 0, 0, nullptr, nullptr, instance, nullptr);
@@ -898,6 +898,16 @@ class Application
         f.snapshot.current = snapshot.current;
         f.snapshot.paused = snapshot.paused;
         f.snapshot.updatedMs = snapshot.updatedMs;
+        // One bar per core needs each core's current load, not its history.
+        for (auto &c : snapshot.cores)
+        {
+            CpuCore bar;
+            bar.id = c.id;
+            bar.efficiencyClass = c.efficiencyClass;
+            bar.kind = c.kind;
+            bar.current = c.current;
+            f.snapshot.cores.push_back(std::move(bar));
+        }
         f.text = renderer.accessibleText(snapshot, true, settings.range);
         stripHost.present(std::move(f));
     }
@@ -1202,7 +1212,7 @@ class Application
         WNDCLASSEXW c{sizeof(c)};
         c.hInstance = instance;
         c.lpfnWndProc = opacityProc;
-        c.lpszClassName = L"NativePerfMonitor.Opacity.1.5";
+        c.lpszClassName = L"NativePerfMonitor.Opacity.1.6";
         c.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         RegisterClassExW(&c);
         auto area = primaryInfo().rcWork;
@@ -1327,13 +1337,13 @@ class Application
         case ResetPositions:
             settings.panelX = settings.panelY = settings.stripX = -1;
             settings.panelW = 450;
-            settings.panelH = 880;
+            settings.panelH = 760;
             panel.scroll = 0;
             break;
         case StandardSize:
             settings.compact = false;
             settings.panelW = 450;
-            settings.panelH = 880;
+            settings.panelH = 760;
             break;
         case CompactSize:
             settings.compact = true;
@@ -1512,6 +1522,11 @@ class Application
         case themeMessage:
         case WM_THEMECHANGED:
             refreshTheme();
+            paintBoth();
+            return 0;
+        case WM_DWMCOLORIZATIONCOLORCHANGED:
+            // The accent changed, by hand or because the wallpaper changed
+            // with "Automatic" accent on. The palette reads it on every paint.
             paintBoth();
             return 0;
         case WM_SETTINGCHANGE:
@@ -1832,7 +1847,7 @@ int WINAPI wWinMain(HINSTANCE h, HINSTANCE, PWSTR, int)
     {
         auto existing = FindWindowW(controlClass, nullptr);
         if (existing)
-            PostMessageW(existing, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.5"), 0, 0);
+            PostMessageW(existing, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.6"), 0, 0);
         if (options.prepare)
         {
             std::wstring error;

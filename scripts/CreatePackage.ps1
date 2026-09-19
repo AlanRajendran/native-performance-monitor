@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 if (-not $BuildDirectory) { $BuildDirectory = Join-Path $repositoryRoot 'build' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repositoryRoot 'release' }
-$version = '1.5.0'
+$version = '1.6.0'
 $executable = Join-Path $BuildDirectory 'Release\PerfMonitor.exe'
 if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw 'Build Release and run tests first.' }
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
@@ -28,7 +28,7 @@ foreach ($name in @('LICENSE.txt')) {
 foreach ($name in @('ReadMe.txt')) {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot "packaging\$name") -Destination $stage
 }
-@{ owner='NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.5'; version=$version } |
+@{ owner='NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.6'; version=$version } |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stage 'package-manifest.json') -Encoding UTF8
 foreach ($file in Get-ChildItem -LiteralPath $stage -File -Force) {
     $file.Attributes = [IO.FileAttributes]::Normal
