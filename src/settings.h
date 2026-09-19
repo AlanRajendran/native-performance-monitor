@@ -4,7 +4,7 @@
 #include <windows.h>
 namespace perf
 {
-inline constexpr wchar_t applicationId[] = L"NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.4";
+inline constexpr wchar_t applicationId[] = L"NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.5";
 struct Settings
 {
     bool panel = true, strip = true, locked = true, compact = false;
@@ -17,6 +17,9 @@ struct Settings
 std::filesystem::path executablePath();
 std::filesystem::path defaultDataDirectory();
 Settings loadSettings(const std::filesystem::path &directory);
+// Copies the settings of the most recent earlier release line, if one exists
+// beside `directory`, into `out`. Returns whether anything was imported.
+bool importPreviousSettings(const std::filesystem::path &directory, Settings &out);
 bool saveSettings(const std::filesystem::path &directory, const Settings &settings, std::wstring &error);
 bool hasReparseAncestor(const std::filesystem::path &path);
 std::wstring startupCommand(const std::filesystem::path &exe);

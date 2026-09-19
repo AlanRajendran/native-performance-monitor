@@ -1,5 +1,53 @@
 # Changes
 
+## 1.5.0
+
+A redesign of how the panel and strip stay in place, after 1.4 still flickered
+and lost both surfaces. Every change below is grounded in measurements taken on
+Windows 11 25H2 with a z-order recorder; see docs/placement.md.
+
+### Stability
+
+- **The strip no longer blinks when the taskbar is clicked.** Explorer raises
+  the taskbar over every other topmost window whenever it is activated, and 1.4
+  could only put the strip back afterwards — 246 ms of blink on every click. The
+  strip is now owned by the taskbar, so the window manager carries it along in
+  the same operation: measured 0 ms.
+- **Show Desktop no longer loses the panel.** Windows 11 raises the desktop over
+  every application window and silently refuses to let an ordinary window above
+  it; every repair 1.3 and 1.4 attempted reported success and changed nothing.
+  The panel now detects Show Desktop and becomes temporarily topmost, at the
+  bottom of the topmost band, then drops back into the desktop layer. This is the
+  technique Rainmeter uses for its "On Desktop" skins.
+- **Nothing can push the locked panel around.** It refuses every z-order change
+  it did not make itself, so it no longer needs watching or repairing.
+- **The strip recovers from Show Desktop too**, which repositions the taskbar in
+  a way that bypasses ownership. It checks on every foreground change and every
+  250 ms, and moves only when it is actually covered.
+- **The strip runs on its own thread.** Ownership ties that thread's input to
+  the taskbar's, so it does nothing but place and draw the strip; nothing else
+  in the program can ever hold up the taskbar.
+- The system-wide event hook is down to foreground and minimize events.
+- The strip no longer hides for shell menus and flyouts; as an owned window it
+  sits directly above the taskbar and they naturally open above it.
+- The strip waits for its taskbar slot at launch instead of appearing above the
+  taskbar and jumping inside.
+
+### Features
+
+- **Record placement trace** in the tray menu (and `--trace`) writes every
+  placement action, and why, to `trace.log` — so a future report comes with a
+  record of what happened.
+- Settings from the previous version are imported on first run, read-only.
+
+### Development
+
+- New files: `src/striphost.{h,cpp}`, `src/accessibility.h`, `src/trace.{h,cpp}`.
+- Window tests assert the new guarantees: the strip is owned by the taskbar, the
+  locked panel refuses restacking by another process, and the locked strip
+  passes the pointer through to the taskbar.
+- Test for importing the previous version's settings.
+
 ## 1.4.0
 
 Installs alongside 1.3 rather than upgrading it, as every previous release in

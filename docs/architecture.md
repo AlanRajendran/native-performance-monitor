@@ -11,13 +11,20 @@ Per-version design notes for 1.1–1.3 are kept in [history/](history/).
 
 ```
 PerfMonitor.exe
-├── UI thread ........ controller window, panel, strip, tray icon, menus,
-│                      all rendering, all placement
+├── UI thread ........ controller window, panel, probe, tray icon, menus,
+│                      panel rendering, every placement decision
+├── Strip thread ..... the taskbar strip window: applies the frame it is
+│                      handed and draws it; owned by Shell_TrayWnd
 ├── Collector thread . PDH and DXGI sampling on a 1 s waitable timer (MTA)
 └── Taskbar thread ... UI Automation reads of the taskbar layout (MTA)
 ```
 
-Worker threads never touch a window. They publish an immutable snapshot under a
+The strip has a thread of its own because it is owned by the taskbar, and
+cross-process ownership attaches that thread's input queue to Explorer's. The
+thread does nothing that can block, so nothing else in the program can ever
+delay input to the taskbar. See [placement.md](placement.md).
+
+The collector and taskbar threads never touch a window. They publish an immutable snapshot under a
 mutex and `PostMessageW` a notification; the UI thread picks it up on its own
 schedule. This is the reason a slow counter query or a slow accessibility walk
 cannot stall drawing.
@@ -27,11 +34,13 @@ invoked. They are not part of the monitor's runtime.
 
 ## Windows
 
-| Window     | Class suffix   | Purpose                                        |
-| ---------- | -------------- | ---------------------------------------------- |
-| controller | `.Controller.` | message sink; owns the tray icon, timers, hooks |
-| panel      | `.Surface.`    | the desktop panel                              |
-| strip      | `.Surface.`    | the taskbar strip                              |
+| Window     | Class suffix   | Thread | Purpose                                        |
+| ---------- | -------------- | ------ | ---------------------------------------------- |
+| controller | `.Controller.` | UI     | message sink; owns the tray icon, timers, hooks |
+| panel      | `.Surface.`    | UI     | the desktop panel                              |
+| probe      | `.Probe.`      | UI     | never shown; detects Show Desktop              |
+| strip      | `.Strip.`      | strip  | the taskbar strip, owned by `Shell_TrayWnd`     |
+| mailbox    | `.StripMailbox.` | strip | message-only; receives frames for the strip   |
 
 The controller is never visible. Keeping it separate means the surfaces can be
 shown, hidden, restyled or recreated without affecting timers, the tray icon or
@@ -89,17 +98,19 @@ redirected paths, reparse points, oversized files and directories owned by
 anything else, and clamps every value on read. Saves are written to a temporary
 file and moved into place, so an interrupted write cannot corrupt the settings.
 
-Version-specific paths and registry keys mean two major versions can be
-installed side by side without touching each other's state.
+Version-specific paths and registry keys mean two release lines can be
+installed side by side without touching each other's state. On its first run a
+new line imports the previous line's settings, read-only.
 
 ## What is deliberately not done
 
 - No kernel driver, service or scheduled task
 - No code injection into Explorer, and no Explorer UI automation beyond
   **reading** the taskbar layout
-- No writes to any shell window
+- No writes to any shell window. The strip names the taskbar as its *owner*,
+  which is a property of the strip, not a change to the taskbar
 - No elevation; installation is per user
 - No network access of any kind
 
-The taskbar strip is drawn in a gap in the taskbar by placing an ordinary
-topmost window there. Explorer is never modified or subclassed.
+The taskbar strip is drawn in a gap in the taskbar by placing a window there
+that the taskbar owns. Explorer is never modified, subclassed or reparented.

@@ -1,8 +1,11 @@
+#include "accessibility.h"
 #include "collector.h"
 #include "install.h"
 #include "render.h"
 #include "settings.h"
+#include "striphost.h"
 #include "taskbar.h"
+#include "trace.h"
 #include <algorithm>
 #include <commctrl.h>
 #include <dwmapi.h>
@@ -20,10 +23,14 @@ using namespace perf;
 using Microsoft::WRL::ComPtr;
 namespace
 {
-constexpr wchar_t controlClass[] = L"NativePerfMonitor.Controller.1.4";
-constexpr wchar_t surfaceClass[] = L"NativePerfMonitor.Surface.1.4";
+constexpr wchar_t controlClass[] = L"NativePerfMonitor.Controller.1.5";
+constexpr wchar_t surfaceClass[] = L"NativePerfMonitor.Surface.1.5";
+constexpr wchar_t probeClass[] = L"NativePerfMonitor.Probe.1.5";
 constexpr UINT sampleMessage = WM_APP + 1, themeMessage = WM_APP + 2, geometryMessage = WM_APP + 3,
-               restoreMessage = WM_APP + 4, taskbarLayoutMessage = WM_APP + 5;
+               restoreMessage = WM_APP + 4, taskbarLayoutMessage = WM_APP + 5, desktopMessage = WM_APP + 6,
+               stripMovedMessage = WM_APP + 7, stripMenuMessage = WM_APP + 8, stripClosedMessage = WM_APP + 9;
+// Controller timers.
+constexpr UINT_PTR reconcileTimer = 1, geometryTimer = 2, desktopRecheckTimer = 3, desktopTimer = 4;
 enum Command : UINT
 {
     ShowPanel = 100,
@@ -42,6 +49,7 @@ enum Command : UINT
     InsideTaskbar,
     RangeSeconds = 130,
     RangeMinutes = 131,
+    TraceToggle = 132,
     Opacity15 = 114,
     Opacity25 = 115,
     Opacity40 = 116,
@@ -53,7 +61,7 @@ struct Options
 {
     std::filesystem::path data, report, preview;
     unsigned benchmark = 0, warmup = 120;
-    bool demo = false, exit = false, prepare = false, isolated = false;
+    bool demo = false, exit = false, prepare = false, isolated = false, trace = false;
     int theme = -1;
 };
 Options parseOptions()
@@ -80,6 +88,8 @@ Options parseOptions()
             o.preview = next();
         else if (a == L"--demo")
             o.demo = true;
+        else if (a == L"--trace")
+            o.trace = true;
         else if (a == L"--exit")
             o.exit = true;
         else if (a == L"--prepare-uninstall")
@@ -117,127 +127,16 @@ uint64_t ownCpuTime()
     return GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u) ? timeValue(k) + timeValue(u) : 0;
 }
 
-// Read-only UIA value: includes metric labels, units, and every application column.
-// Values are queried, not announced on each sample.
-class ValueProvider final : public IRawElementProviderSimple, public IValueProvider
-{
-    LONG refs_ = 1;
-    HWND window_;
-
-  public:
-    explicit ValueProvider(HWND w) : window_(w) {}
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void **p) override
-    {
-        if (!p)
-            return E_POINTER;
-        *p = nullptr;
-        if (id == __uuidof(IUnknown) || id == __uuidof(IRawElementProviderSimple))
-            *p = static_cast<IRawElementProviderSimple *>(this);
-        else if (id == __uuidof(IValueProvider))
-            *p = static_cast<IValueProvider *>(this);
-        else
-            return E_NOINTERFACE;
-        AddRef();
-        return S_OK;
-    }
-    ULONG STDMETHODCALLTYPE AddRef() override
-    {
-        return InterlockedIncrement(&refs_);
-    }
-    ULONG STDMETHODCALLTYPE Release() override
-    {
-        auto n = InterlockedDecrement(&refs_);
-        if (!n)
-            delete this;
-        return n;
-    }
-    HRESULT STDMETHODCALLTYPE get_ProviderOptions(ProviderOptions *p) override
-    {
-        if (!p)
-            return E_POINTER;
-        *p = ProviderOptions_ServerSideProvider;
-        return S_OK;
-    }
-    HRESULT STDMETHODCALLTYPE GetPatternProvider(PATTERNID id, IUnknown **p) override
-    {
-        if (!p)
-            return E_POINTER;
-        *p = nullptr;
-        if (id == UIA_ValuePatternId)
-        {
-            *p = static_cast<IValueProvider *>(this);
-            AddRef();
-        }
-        return S_OK;
-    }
-    HRESULT STDMETHODCALLTYPE GetPropertyValue(PROPERTYID id, VARIANT *p) override
-    {
-        if (!p)
-            return E_POINTER;
-        VariantInit(p);
-        if (id == UIA_NamePropertyId)
-        {
-            p->vt = VT_BSTR;
-            p->bstrVal = SysAllocString(L"Performance monitor");
-        }
-        else if (id == UIA_ControlTypePropertyId)
-        {
-            p->vt = VT_I4;
-            p->lVal = UIA_PaneControlTypeId;
-        }
-        else if (id == UIA_IsControlElementPropertyId || id == UIA_IsContentElementPropertyId ||
-                 id == UIA_IsEnabledPropertyId)
-        {
-            p->vt = VT_BOOL;
-            p->boolVal = VARIANT_TRUE;
-        }
-        else if (id == UIA_IsKeyboardFocusablePropertyId)
-        {
-            p->vt = VT_BOOL;
-            p->boolVal = VARIANT_FALSE;
-        }
-        return S_OK;
-    }
-    HRESULT STDMETHODCALLTYPE get_HostRawElementProvider(IRawElementProviderSimple **p) override
-    {
-        return UiaHostProviderFromHwnd(window_, p);
-    }
-    HRESULT STDMETHODCALLTYPE SetValue(LPCWSTR) override
-    {
-        return UIA_E_NOTSUPPORTED;
-    }
-    HRESULT STDMETHODCALLTYPE get_Value(BSTR *p) override
-    {
-        if (!p)
-            return E_POINTER;
-        if (!IsWindow(window_))
-            return UIA_E_ELEMENTNOTAVAILABLE;
-        wchar_t text[4096]{};
-        GetWindowTextW(window_, text, 4096);
-        *p = SysAllocString(text);
-        return *p ? S_OK : E_OUTOFMEMORY;
-    }
-    HRESULT STDMETHODCALLTYPE get_IsReadOnly(BOOL *p) override
-    {
-        if (!p)
-            return E_POINTER;
-        *p = TRUE;
-        return S_OK;
-    }
-};
+// The desktop panel. The taskbar strip lives on its own thread; see striphost.h.
 struct Surface
 {
     HWND hwnd = nullptr;
-    bool strip = false;
     float dpi = 96, scroll = 0;
     BitmapSurface bitmap;
     ValueProvider *provider = nullptr;
     // The last rectangle handed to the shell. Position and size are state only
     // this program changes, so they can be cached and compared against.
-    //
-    // Z-order deliberately is NOT cached. Any process can restack any window at
-    // any time without telling us, so a remembered anchor says nothing about
-    // where the window actually sits now. It has to be observed each pass.
+    // Z-order is never cached: see the desktop layer in Application.
     Rect applied{};
     bool appliedValid = false;
     std::wstring appliedText;
@@ -252,18 +151,23 @@ class Application
     std::filesystem::path exe, data;
     HINSTANCE instance;
     HWND controller = nullptr;
-    Surface panel, strip;
+    Surface panel;
+    StripHost stripHost;
+    HWND probe = nullptr;
+    bool desktopRaised = false;
+    int desktopRechecks = 0;
     TaskbarObserver taskbarObserver;
-    bool stripHasRoom = true, stripInside = false, stripPlacedInside = false;
+    // The strip's placement is decided here and handed to the strip thread.
+    Rect stripRect{};
+    bool stripValid = false, stripInside = false, stripPlacedInside = false;
     // Placement damping. Every one of these exists to stop an oscillating
     // input from reaching the screen; see docs/placement.md.
-    static constexpr uint64_t restackIntervalMs = 600; // anti-fight gap between z-order repairs
-    static constexpr uint64_t stripSettleMs = 1500;    // minimum gap between taskbar slot moves
-    static constexpr uint64_t stripRestoreMs = 700;    // quiet time before the strip comes back
-    static constexpr int stripDeadband = 12;           // slot drift ignored outright, in pixels
-    static constexpr UINT geometryDelayMs = 250;       // quiet time before a shell event is acted on
-    uint64_t panelRestackMs = 0, stripTopmostMs = 0, stripMovedMs = 0, stripBlockedMs = 0;
-    bool panelRaised = false;
+    static constexpr uint64_t stripSettleMs = 1500; // minimum gap between taskbar slot moves
+    static constexpr uint64_t stripRestoreMs = 700; // quiet time before the strip comes back
+    static constexpr int stripDeadband = 12;        // slot drift ignored outright, in pixels
+    static constexpr UINT geometryDelayMs = 250;    // quiet time before a shell event is acted on
+    static constexpr UINT desktopIntervalMs = 250;  // Show Desktop poll, as Rainmeter uses
+    uint64_t stripMovedMs = 0, stripBlockedMs = 0, launchedMs = GetTickCount64();
     HWND opacityWindow = nullptr, opacityTrack = nullptr, opacityValue = nullptr;
     HBRUSH opacityBrush = nullptr;
     HFONT opacityFont = nullptr;
@@ -273,7 +177,7 @@ class Application
     std::vector<Adapter> adapters;
     NOTIFYICONDATAW tray{};
     UINT taskbarCreated = 0, stopMessage = 0;
-    HWINEVENTHOOK foregroundHook = nullptr, objectHook = nullptr, minimizeHook = nullptr;
+    HWINEVENTHOOK foregroundHook = nullptr, minimizeHook = nullptr;
     HANDLE singleton = nullptr;
     winrt::Windows::UI::ViewManagement::UISettings uiSettings{nullptr};
     winrt::event_token colorToken{};
@@ -299,7 +203,12 @@ class Application
         exe = executablePath();
         data = options.data.empty() ? defaultDataDirectory() : std::filesystem::absolute(options.data);
         settings = loadSettings(data);
-        strip.strip = true;
+        // A new release line starts with its own settings directory. Carry the
+        // previous line's choices across once, rather than making the user
+        // set up opacity, positions and ranges again after every upgrade.
+        std::error_code ec;
+        if (!options.isolated && !std::filesystem::exists(data / L"settings.ini", ec))
+            importPreviousSettings(data, settings);
     }
     ~Application()
     {
@@ -307,8 +216,6 @@ class Application
             uiSettings.ColorValuesChanged(colorToken);
         if (foregroundHook)
             UnhookWinEvent(foregroundHook);
-        if (objectHook)
-            UnhookWinEvent(objectHook);
         if (minimizeHook)
             UnhookWinEvent(minimizeHook);
         if (singleton)
@@ -336,15 +243,10 @@ class Application
     {
         if (!application || !h || object != OBJID_WINDOW || child != 0)
             return;
-        if (event == EVENT_OBJECT_SHOW || event == EVENT_OBJECT_HIDE)
-        {
-            wchar_t cls[128];
-            GetClassNameW(h, cls, 128);
-            if (h != GetForegroundWindow() && wcscmp(cls, L"Shell_TrayWnd") &&
-                wcscmp(cls, L"XamlExplorerHostIslandWindow") && wcscmp(cls, L"Windows.UI.Core.CoreWindow") &&
-                wcscmp(cls, L"#32768"))
-                return;
-        }
+        // Show Desktop begins and ends with a foreground change, so the desktop
+        // layer is checked at once rather than after the geometry debounce.
+        if (event == EVENT_SYSTEM_FOREGROUND)
+            PostMessageW(application->controller, desktopMessage, 0, 0);
         if (!application->geometryPending)
         {
             application->geometryPending = true;
@@ -353,8 +255,8 @@ class Application
     }
     bool initialize()
     {
-        stopMessage = RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.4");
-        singleton = CreateMutexW(nullptr, FALSE, L"Local\\NativePerfMonitor.6D845648.v1.4");
+        stopMessage = RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.5");
+        singleton = CreateMutexW(nullptr, FALSE, L"Local\\NativePerfMonitor.6D845648.v1.5");
         if (GetLastError() == ERROR_ALREADY_EXISTS)
         {
             auto existing = FindWindowW(controlClass, nullptr);
@@ -362,6 +264,9 @@ class Application
                 PostMessageW(existing, restoreMessage, 0, 0);
             return false;
         }
+        if (options.trace)
+            trace::start(data / L"trace.log");
+        trace::line(L"start: %s, build %s", exe.c_str(), displayVersion);
         if (!renderer.initialize())
         {
             MessageBoxW(nullptr, L"Direct2D or DirectWrite could not be initialized.", L"Performance monitor",
@@ -372,6 +277,9 @@ class Application
         c.hInstance = instance;
         c.lpfnWndProc = controllerProc;
         c.lpszClassName = controlClass;
+        RegisterClassExW(&c);
+        c.lpfnWndProc = probeProc;
+        c.lpszClassName = probeClass;
         RegisterClassExW(&c);
         c.lpfnWndProc = surfaceProc;
         c.lpszClassName = surfaceClass;
@@ -384,10 +292,12 @@ class Application
         DWORD ex = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT;
         panel.hwnd = CreateWindowExW(ex, surfaceClass, L"Performance monitor desktop", WS_POPUP, 0, 0, 450,
                                      880, nullptr, nullptr, instance, &panel);
-        strip.hwnd = CreateWindowExW(ex, surfaceClass, L"Performance monitor strip", WS_POPUP, 0, 0, 344, 54,
-                                     nullptr, nullptr, instance, &strip);
-        if (!panel.hwnd || !strip.hwnd)
+        // Never shown: it exists only to be found above or below the desktop host.
+        probe = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, probeClass, L"", WS_POPUP | WS_DISABLED,
+                                0, 0, 0, 0, nullptr, nullptr, instance, nullptr);
+        if (!panel.hwnd || !probe)
             return false;
+        desktopRaised = desktopRaisedNow();
         adapters = enumerateAdapters();
         if (std::none_of(adapters.begin(), adapters.end(),
                          [&](auto &a) { return a.luid == settings.adapter; }))
@@ -406,26 +316,32 @@ class Application
         taskbarObserver.start(controller, taskbarLayoutMessage);
         syncObserver();
         layout();
+        // The strip thread starts once there is a placement to give it.
+        StripEvents events{controller, stripMovedMessage, stripMenuMessage, stripClosedMessage};
+        StripFrame first;
+        first.rect = stripRect;
+        first.locked = settings.locked;
+        first.palette = palette(shellDark, contrast);
+        if (!stripHost.start(instance, events, std::move(first)))
+            trace::line(L"strip: thread failed to start");
+        presentStrip();
         addTray();
-        // Only the three things that can actually invalidate placement are
-        // observed. The previous range ran from EVENT_OBJECT_SHOW to
-        // EVENT_OBJECT_LOCATIONCHANGE, which also delivered focus, selection,
-        // state-change and location-change events from every window in every
-        // process: a continuous stream during any drag, resize or animation,
-        // and the main reason the surfaces stuttered on busy desktops.
+        // Foreground changes (Show Desktop starts and ends with one, as do
+        // full-screen applications) and minimize/restore are all placement
+        // needs to hear about. Neither z-order nor window movement is watched:
+        // the panel refuses z-order changes outright and the strip is carried
+        // by its owner, so there is nothing left to repair after the fact.
         foregroundHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, eventHook,
                                          0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
-        objectHook = SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE, nullptr, eventHook, 0, 0,
-                                     WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
         minimizeHook = SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, nullptr,
                                        eventHook, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
-        SetTimer(controller, 1, 1000, nullptr);
+        SetTimer(controller, reconcileTimer, 1000, nullptr);
+        SetTimer(controller, desktopTimer, desktopIntervalMs, nullptr);
         taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
         if (options.demo)
         {
             snapshot = demonstrationSnapshot();
             describe(panel);
-            describe(strip);
         }
         else
             collector.start(settings.adapter, controller, sampleMessage);
@@ -495,57 +411,46 @@ class Application
             RedrawWindow(opacityWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE);
         }
         if (panel.hwnd)
-            applyBackdrop(panel);
-        if (strip.hwnd)
-            applyBackdrop(strip);
+            applyBackdrop();
     }
-    void applyBackdrop(Surface &s)
+    void applyBackdrop()
     {
-        BOOL d = s.strip ? shellDark : dark;
-        DwmSetWindowAttribute(s.hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &d, sizeof(d));
-        // Rounded corners suit a surface that reads as its own object. Embedded
-        // in the taskbar they outline the strip as a separate window sitting on
-        // the bar, which is exactly the impression to avoid.
-        const bool embedded = stripEmbedded(s);
-        DWM_WINDOW_CORNER_PREFERENCE corner = embedded ? DWMWCP_DONOTROUND : DWMWCP_ROUND;
-        DwmSetWindowAttribute(s.hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
-        // DWM draws its own hairline border around a window. Both surfaces draw
-        // whatever outline they want inside their own bitmap, so the system one
-        // is never wanted; on the embedded strip it is the single thing that
-        // made it look like a floating card.
+        BOOL d = dark;
+        DwmSetWindowAttribute(panel.hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &d, sizeof(d));
+        DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
+        DwmSetWindowAttribute(panel.hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
+        // The panel draws its own outline; DWM's hairline border would double it.
         COLORREF border = DWMWA_COLOR_NONE;
-        DwmSetWindowAttribute(s.hwnd, DWMWA_BORDER_COLOR, &border, sizeof(border));
+        DwmSetWindowAttribute(panel.hwnd, DWMWA_BORDER_COLOR, &border, sizeof(border));
         // True alpha translucency works consistently when locked or unlocked.
         // Mica is a wallpaper-derived material and cannot supply this layered-window effect.
         DWM_SYSTEMBACKDROP_TYPE type = DWMSBT_NONE;
-        DwmSetWindowAttribute(s.hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &type, sizeof(type));
+        DwmSetWindowAttribute(panel.hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &type, sizeof(type));
         MARGINS margins{};
-        DwmExtendFrameIntoClientArea(s.hwnd, &margins);
+        DwmExtendFrameIntoClientArea(panel.hwnd, &margins);
     }
-    // Whether this surface is currently drawn as taskbar content rather than as
-    // its own panel. Painting and the window frame must agree on this.
-    bool stripEmbedded(const Surface &s) const
+    // Whether the strip is drawn as taskbar content rather than as its own
+    // card. The strip thread applies the matching window frame.
+    bool stripEmbedded() const
     {
-        return s.strip && stripInside && !contrast;
+        return stripInside && !contrast;
     }
     void applyMode()
     {
-        for (auto s : {&panel, &strip})
-        {
-            DWORD style = WS_POPUP | (!settings.locked && !s->strip ? WS_THICKFRAME : 0);
-            DWORD ex = WS_EX_TOOLWINDOW | WS_EX_LAYERED |
-                       (settings.locked ? (WS_EX_TRANSPARENT | WS_EX_NOACTIVATE) : 0);
-            SetWindowLongPtrW(s->hwnd, GWL_STYLE, style);
-            SetWindowLongPtrW(s->hwnd, GWL_EXSTYLE, ex);
-            SetWindowPos(s->hwnd, nullptr, 0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-            applyBackdrop(*s);
-        }
+        DWORD style = WS_POPUP | (!settings.locked ? WS_THICKFRAME : 0);
+        DWORD ex =
+            WS_EX_TOOLWINDOW | WS_EX_LAYERED | (settings.locked ? (WS_EX_TRANSPARENT | WS_EX_NOACTIVATE) : 0);
+        SetWindowLongPtrW(panel.hwnd, GWL_STYLE, style);
+        SetWindowLongPtrW(panel.hwnd, GWL_EXSTYLE, ex);
+        SetWindowPos(panel.hwnd, nullptr, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        applyBackdrop();
         if (settings.locked)
             panel.scroll = 0;
-        // Lock state changes the window styles and the z-order band, so the
-        // cached placement no longer describes these windows.
+        // Lock state decides which z-order layer the panel belongs to, and the
+        // cached geometry no longer describes a window with different styles.
         invalidatePlacement();
+        placePanelLayer();
     }
     MONITORINFO primaryInfo()
     {
@@ -553,12 +458,11 @@ class Application
         GetMonitorInfoW(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY), &m);
         return m;
     }
+
     // ---------------------------------------------------------------------
-    // Placement is edge triggered. Each pass computes what the surfaces should
-    // look like, compares that against what was last handed to the shell, and
-    // calls into the window manager only for the parts that actually differ.
-    // An input that oscillates therefore stops at the comparison instead of
-    // turning into visible movement.
+    // Geometry. Position and size are state only this program changes, so they
+    // are cached and a pass that computes the same rectangle calls nothing.
+    // Z-order is handled separately below and is never cached.
     // ---------------------------------------------------------------------
     void applyGeometry(Surface &s, Rect want)
     {
@@ -574,39 +478,154 @@ class Application
         if (resized && !fresh)
             paint(s);
     }
-    // Always calls the shell. Callers must decide, from what they can see right
-    // now, that the window is in the wrong place; there is nothing to compare
-    // against here because the previous answer may have been overruled since.
-    void applyZOrder(Surface &s, HWND after)
+    void invalidatePlacement()
     {
-        SetLastError(0);
-        const bool placed =
-            SetWindowPos(s.hwnd, after, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE) != FALSE;
-        SetPropW(s.hwnd, L"NativePerfMonitor.ZOrderError",
-                 reinterpret_cast<HANDLE>(uintptr_t(placed ? 0 : GetLastError())));
-        SetPropW(s.hwnd, L"NativePerfMonitor.ZOrderAnchor", after);
+        panel.appliedValid = false;
+        stripValid = false;
+        stripMovedMs = 0;
     }
-    // Whether the taskbar currently sits above the strip, which would hide it
-    // completely. Walks upwards from the strip, so it only ever visits the few
-    // windows in the topmost band above it.
-    bool stripBelowTaskbar()
+
+    // ---------------------------------------------------------------------
+    // The desktop layer.
+    //
+    // A locked panel belongs just above the wallpaper and below every
+    // application window. It is put there with HWND_BOTTOM and then protected:
+    // its WM_WINDOWPOSCHANGING refuses every z-order change this program did
+    // not make (its own calls pass SWP_NOSENDCHANGING and never see the veto).
+    // In normal use nothing can then move it, so nothing needs repairing.
+    //
+    // The exception is Show Desktop. Windows 11 raises the desktop host above
+    // every application window and will not let an ordinary window above it:
+    // SetWindowPos(HWND_TOP) returns success and changes nothing (measured on
+    // 25H2). That is why 1.3 and 1.4 lost the panel -- every repair they made
+    // "succeeded". The only way to stay visible is to be topmost, so while the
+    // desktop is raised the panel moves to the bottom of the topmost band, and
+    // it drops back when the desktop does. This is the technique Rainmeter
+    // uses for its "On Desktop" skins.
+    //
+    // The state is read from a hidden probe window kept at HWND_BOTTOM: in the
+    // normal state it sits just above the desktop host; while the host is
+    // raised, the probe is below it.
+    // ---------------------------------------------------------------------
+    static constexpr UINT layerFlags =
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING;
+    static LRESULT CALLBACK probeProc(HWND h, UINT m, WPARAM w, LPARAM l)
     {
-        auto bar = FindWindowW(L"Shell_TrayWnd", nullptr);
-        if (!bar)
+        // The probe is only meaningful where this program put it.
+        if (m == WM_WINDOWPOSCHANGING)
+        {
+            reinterpret_cast<WINDOWPOS *>(l)->flags |= SWP_NOZORDER;
+            return 0;
+        }
+        return DefWindowProcW(h, m, w, l);
+    }
+    // The window hosting the desktop icons when it has been raised, or the
+    // shell window on builds where that is always the host. Windows 11 24H2
+    // moved SHELLDLL_DefView permanently under Progman; earlier builds keep it
+    // there normally and move it into a raised WorkerW for Show Desktop. This
+    // follows Rainmeter's GetDesktopIconsHostWindow.
+    static HWND desktopIconsHost()
+    {
+        HWND shell = GetShellWindow();
+        if (!shell)
+            return nullptr;
+        static const bool modern =
+            GetProcAddress(GetModuleHandleW(L"user32"), "GetCurrentMonitorTopologyId") != nullptr;
+        const bool hostsIcons = FindWindowExW(shell, nullptr, L"SHELLDLL_DefView", nullptr) != nullptr;
+        if (modern)
+            return hostsIcons ? shell : nullptr;
+        if (hostsIcons)
+            return nullptr;
+        DWORD shellProcess = 0;
+        GetWindowThreadProcessId(shell, &shellProcess);
+        for (HWND w = nullptr; (w = FindWindowExW(nullptr, w, L"WorkerW", nullptr)) != nullptr;)
+        {
+            DWORD process = 0;
+            GetWindowThreadProcessId(w, &process);
+            if (process == shellProcess && IsWindowVisible(w) &&
+                FindWindowExW(w, nullptr, L"SHELLDLL_DefView", nullptr))
+                return w;
+        }
+        return nullptr;
+    }
+    bool desktopRaisedNow()
+    {
+        HWND host = desktopIconsHost();
+        return host && IsWindowVisible(host) && FindWindowExW(nullptr, host, probeClass, nullptr) != nullptr;
+    }
+    // Puts the panel in the layer it belongs in right now. Only called when that
+    // answer changes or is seen to be violated, so it never fights anything.
+    void placePanelLayer()
+    {
+        if (!panel.hwnd)
+            return;
+        if (probe)
+            SetWindowPos(probe, HWND_BOTTOM, 0, 0, 0, 0, layerFlags);
+        if (!settings.locked)
+        {
+            // Unlocked, the panel is an ordinary window being arranged.
+            SetWindowPos(panel.hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, layerFlags);
+            SetWindowPos(panel.hwnd, HWND_TOP, 0, 0, 0, 0, layerFlags);
+            trace::line(L"panel: unlocked, normal window layer");
+            return;
+        }
+        if (!desktopRaised)
+        {
+            // HWND_BOTTOM also clears topmost, in the same operation, so
+            // returning from Show Desktop never passes over application windows.
+            SetWindowPos(panel.hwnd, HWND_BOTTOM, 0, 0, 0, 0, layerFlags);
+            trace::line(L"panel: desktop layer");
+            return;
+        }
+        SetWindowPos(panel.hwnd, HWND_TOPMOST, 0, 0, 0, 0, layerFlags);
+        // Then down to the bottom of the topmost band, so it covers the raised
+        // desktop and nothing else that is topmost.
+        HWND host = desktopIconsHost(), strip = stripHost.window();
+        for (HWND h = host; h && (h = GetWindow(h, GW_HWNDPREV)) != nullptr;)
+            if (h != panel.hwnd && h != strip && (GetWindowLongPtrW(h, GWL_EXSTYLE) & WS_EX_TOPMOST) &&
+                SetWindowPos(panel.hwnd, h, 0, 0, 0, 0, layerFlags))
+                break;
+        trace::line(L"panel: desktop raised, lifted to the bottom of the topmost band");
+    }
+    // True if the panel is somewhere below the desktop host. With the veto in
+    // place this should not happen; this is the net under the net.
+    bool panelUnderDesktop()
+    {
+        HWND shell = GetShellWindow();
+        if (!shell)
             return false;
-        for (auto h = GetWindow(strip.hwnd, GW_HWNDPREV); h; h = GetWindow(h, GW_HWNDPREV))
-            if (h == bar)
+        for (HWND h = GetWindow(shell, GW_HWNDNEXT); h; h = GetWindow(h, GW_HWNDNEXT))
+            if (h == panel.hwnd)
                 return true;
         return false;
     }
+    // Cheap when nothing changed: one FindWindowEx. Called on every foreground
+    // change, shortly after it, and every 250 ms.
+    void checkDesktop()
+    {
+        stripHost.verify();
+        if (!panel.hwnd)
+            return;
+        const bool raised = desktopRaisedNow();
+        if (raised != desktopRaised)
+        {
+            desktopRaised = raised;
+            trace::line(L"desktop: %s", raised ? L"raised (Show Desktop)" : L"back in place");
+            placePanelLayer();
+        }
+        else if (settings.locked && !raised && panelUnderDesktop())
+        {
+            trace::line(L"panel: found under the desktop host, restoring");
+            placePanelLayer();
+        }
+    }
+
     // True while an application owns the whole monitor without a caption, which
-    // is what an exclusive full-screen game or a video player looks like.
-    // Reordering windows underneath one can drop it out of its presentation
-    // mode, so placement leaves the z-order alone while this holds.
+    // is what a full-screen game or video looks like. The strip stands aside.
     bool fullscreenForeground()
     {
         auto fg = GetForegroundWindow();
-        if (!fg || fg == panel.hwnd || fg == strip.hwnd || fg == controller)
+        if (!fg || fg == panel.hwnd || fg == stripHost.window() || fg == controller)
             return false;
         wchar_t cls[128]{};
         GetClassNameW(fg, cls, 128);
@@ -626,118 +645,7 @@ class Application
     {
         taskbarObserver.enable(settings.strip && settings.insideTaskbar);
     }
-    // Forgets what the shell was last told, so the next pass reapplies
-    // everything. Called for the events that genuinely invalidate placement --
-    // Explorer restarting, a display change, a DPI change, a lock change --
-    // rather than re-asserting z-order on a timer, which is what made the
-    // surfaces fight the shell for position.
-    void invalidatePlacement()
-    {
-        for (auto s : {&panel, &strip})
-            s->appliedValid = false;
-        panelRestackMs = stripTopmostMs = stripMovedMs = 0;
-        panelRaised = false;
-    }
-    // Keeps the locked panel just above the desktop. desktopAnchor() reports the
-    // panel's own handle when it is already correctly placed, so a stable
-    // desktop costs one enumeration and no shell call. The rate limit only
-    // bounds how hard this pushes back when another program keeps restacking
-    // us; it deliberately does not delay the first repair.
-    void restack()
-    {
-        if (!settings.locked)
-        {
-            // Unlocked, the panel is an ordinary window the user can raise and
-            // lower at will, so it is lifted once and then left alone.
-            if (!panelRaised)
-            {
-                panelRaised = true;
-                applyZOrder(panel, HWND_TOP);
-            }
-            return;
-        }
-        panelRaised = false;
-        if (fullscreenForeground())
-            return;
-        auto anchor = desktopAnchor();
-        if (anchor == panel.hwnd)
-            return;
-        const auto now = GetTickCount64();
-        if (panelRestackMs && now - panelRestackMs < restackIntervalMs)
-            return;
-        panelRestackMs = now;
-        applyZOrder(panel, anchor);
-    }
-    // The strip has to stay above the taskbar to be visible at all. It is put
-    // there once and then only put back when it is seen to have lost the
-    // position -- re-asserting it unconditionally is what made Explorer and this
-    // program take turns restacking each other.
-    void keepStripAbove(bool fresh)
-    {
-        if (!fresh && !stripBelowTaskbar())
-            return;
-        const auto now = GetTickCount64();
-        if (!fresh && stripTopmostMs && now - stripTopmostMs < restackIntervalMs)
-            return;
-        stripTopmostMs = now;
-        applyZOrder(strip, HWND_TOPMOST);
-    }
-    HWND desktopAnchor()
-    {
-        // HWND_BOTTOM can put a tool window below Explorer's desktop host.
-        // Use visible ordinary windows as anchors; hidden shell windows can live in
-        // protected z-order bands and make SetWindowPos fail with access denied.
-        auto monitor = primaryInfo().rcMonitor;
-        HWND lastOrdinary = nullptr;
-        bool sawPanel = false, ordinaryBelowPanel = false;
-        for (auto h = GetTopWindow(nullptr); h; h = GetWindow(h, GW_HWNDNEXT))
-        {
-            if (h == panel.hwnd)
-            {
-                sawPanel = true;
-                continue;
-            }
-            if (h == controller || h == strip.hwnd || h == opacityWindow || !IsWindowVisible(h) ||
-                IsIconic(h))
-                continue;
-            wchar_t cls[128]{};
-            GetClassNameW(h, cls, 128);
-            if (!wcscmp(cls, L"Shell_TrayWnd") || !wcscmp(cls, L"Shell_SecondaryTrayWnd"))
-                continue;
-            const bool desktop = !wcscmp(cls, L"Progman") || !wcscmp(cls, L"WorkerW");
-            if (!desktop)
-            {
-                if (!(GetWindowLongPtrW(h, GWL_EXSTYLE) & WS_EX_TOPMOST))
-                {
-                    DWORD cloaked = 0;
-                    DwmGetWindowAttribute(h, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
-                    if (!cloaked)
-                    {
-                        lastOrdinary = h;
-                        ordinaryBelowPanel = ordinaryBelowPanel || sawPanel;
-                    }
-                }
-                continue;
-            }
-            RECT r{};
-            GetWindowRect(h, &r);
-            if (r.left > monitor.left || r.top > monitor.top || r.right < monitor.right ||
-                r.bottom < monitor.bottom)
-                continue;
-            if (sawPanel && !ordinaryBelowPanel)
-                return panel.hwnd;
-            if (lastOrdinary)
-                return lastOrdinary;
-            // HWND_NOTOPMOST does nothing when the panel is already non-topmost.
-            // Raise it above the desktop host when no ordinary window precedes it.
-            return HWND_TOP;
-        }
-        // No desktop host was found covering this monitor, which happens while
-        // the wallpaper host is being recreated. HWND_BOTTOM here would drop the
-        // panel behind the wallpaper and it would stay there, invisible, until
-        // something forced a fresh placement. Leave the z-order alone instead.
-        return panel.hwnd;
-    }
+
     void layout()
     {
         if (!panel.hwnd)
@@ -752,7 +660,7 @@ class Application
         UINT dpi = GetDpiForWindow(panel.hwnd);
         if (!dpi)
             dpi = 96;
-        panel.dpi = strip.dpi = float(dpi);
+        panel.dpi = float(dpi);
         float scale = dpi / 96.f;
         auto px = [&](float n) { return int(std::lround(n * scale)); };
         Rect work{m.rcWork.left, m.rcWork.top, m.rcWork.right - m.rcWork.left,
@@ -771,11 +679,8 @@ class Application
         int x =
             settings.panelX < 0 ? work.x + work.w - px(float(pw + 24)) : work.x + px(float(settings.panelX));
         int y = settings.panelY < 0 ? work.y + px(24) : work.y + px(float(settings.panelY));
-        auto p = clampRect({x, y, px(float(pw)), px(float(ph))}, work, px(360), px(300));
-        // Geometry is applied unconditionally of z-order, which the shell may
-        // refuse; restacking is a separate, rate-limited decision below.
-        applyGeometry(panel, p);
-        restack();
+        applyGeometry(panel, clampRect({x, y, px(float(pw)), px(float(ph))}, work, px(360), px(300)));
+
         APPBARDATA bar{sizeof(bar)};
         RECT task = m.rcWork;
         auto ok = SHAppBarMessage(ABM_GETTASKBARPOS, &bar);
@@ -799,7 +704,6 @@ class Application
                            {m.rcMonitor.left, m.rcMonitor.top, m.rcMonitor.right - m.rcMonitor.left,
                             m.rcMonitor.bottom - m.rcMonitor.top},
                            px(280), sh);
-        stripHasRoom = true;
         stripInside = false;
         if (settings.insideTaskbar)
         {
@@ -813,7 +717,7 @@ class Application
                 // Prefer the slot already in use. Re-picking the nearest gap on
                 // every taskbar change makes the strip hop each time an icon,
                 // a badge or the weather widget changes width.
-                int preferred = stripPlacedInside && strip.appliedValid ? strip.applied.x : sx;
+                int preferred = stripPlacedInside && stripValid ? stripRect.x : sx;
                 auto slot = taskbarSlot(bounds, observed.occupied, sw, height, preferred, px(8));
                 if (!slot)
                     slot = taskbarSlot(bounds, observed.occupied, px(280), height, preferred, px(8));
@@ -825,11 +729,11 @@ class Application
             }
         }
         r = settleStrip(r);
-        const bool freshStrip = !strip.appliedValid;
-        applyGeometry(strip, r);
-        keepStripAbove(freshStrip);
-        if (stripInside != stripPlacedInside || freshStrip)
-            applyBackdrop(strip);
+        if (!stripValid || r != stripRect)
+            trace::line(L"strip: placed at %d,%d %dx%d (%s)", r.x, r.y, r.w, r.h,
+                        stripInside ? L"inside the taskbar" : L"above the taskbar");
+        stripRect = r;
+        stripValid = true;
         stripPlacedInside = stripInside;
         visibility();
         layingOut = false;
@@ -841,25 +745,23 @@ class Application
     {
         // Moving between the taskbar and the space above it, or following the
         // bar to a different edge, is structural: apply it immediately.
-        if (!strip.appliedValid || stripInside != stripPlacedInside || wanted.y != strip.applied.y ||
-            wanted.h != strip.applied.h)
+        if (!stripValid || stripInside != stripPlacedInside || wanted.y != stripRect.y ||
+            wanted.h != stripRect.h)
             return wanted;
         // Within one placement, both the position and the width can change as
         // gaps open and close -- the narrower fallback slot is a width change.
         // Both are damped, or the strip would twitch between two slot sizes.
-        const int drift = std::abs(wanted.x - strip.applied.x) + std::abs(wanted.w - strip.applied.w);
+        const int drift = std::abs(wanted.x - stripRect.x) + std::abs(wanted.w - stripRect.w);
         if (!drift)
             return wanted;
         const auto now = GetTickCount64();
         if (drift < stripDeadband || (stripMovedMs && now - stripMovedMs < stripSettleMs))
-            return strip.applied;
+            return stripRect;
         stripMovedMs = now;
         return wanted;
     }
-    // Debounced wrapper around hideStrip(). Suppression takes effect at once so
-    // a menu is never covered, but restoring waits for the obstruction to stay
-    // gone. A blink needs a hide followed promptly by a show, and this makes
-    // that second half impossible.
+    // Hiding takes effect at once; coming back waits for the reason to stay
+    // gone, so a condition that flickers cannot make the strip flicker with it.
     bool stripSuppressed()
     {
         if (hideStrip())
@@ -869,16 +771,21 @@ class Application
         }
         return stripBlockedMs && GetTickCount64() - stripBlockedMs < stripRestoreMs;
     }
+    // Only two things hide the strip: a full-screen application, and an
+    // auto-hidden taskbar that has slid away. Menus and shell flyouts used to
+    // hide it too, because a re-asserted topmost strip could end up above
+    // them; an owned strip sits directly above the taskbar, so anything the
+    // shell opens later lands above it naturally.
     bool hideStrip()
     {
         if (!settings.locked)
             return false;
-        auto m = primaryInfo();
         if (fullscreenForeground())
             return true;
         APPBARDATA bar{sizeof(bar)};
         if (SHAppBarMessage(ABM_GETSTATE, &bar) & ABS_AUTOHIDE)
         {
+            auto m = primaryInfo();
             auto task = FindWindowW(L"Shell_TrayWnd", nullptr);
             RECT r{}, visible{};
             if (task && GetWindowRect(task, &r))
@@ -889,49 +796,19 @@ class Application
                     return true;
             }
         }
-        struct Context
-        {
-            RECT strip;
-            bool blocked = false;
-        } ctx{};
-        GetWindowRect(strip.hwnd, &ctx.strip);
-        EnumWindows(
-            [](HWND h, LPARAM value) -> BOOL
-            {
-                auto &c = *reinterpret_cast<Context *>(value);
-                if (!IsWindowVisible(h) || IsIconic(h))
-                    return TRUE;
-                wchar_t name[128]{};
-                GetClassNameW(h, name, 128);
-                if (wcscmp(name, L"#32768") && wcscmp(name, L"XamlExplorerHostIslandWindow") &&
-                    wcscmp(name, L"Windows.UI.Core.CoreWindow") && wcscmp(name, L"ControlCenterWindow"))
-                    return TRUE;
-                DWORD cloaked = 0;
-                DwmGetWindowAttribute(h, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
-                if (cloaked)
-                    return TRUE;
-                RECT r{}, intersection{};
-                GetWindowRect(h, &r);
-                if (IntersectRect(&intersection, &r, &c.strip))
-                {
-                    c.blocked = true;
-                    return FALSE;
-                }
-                return TRUE;
-            },
-            reinterpret_cast<LPARAM>(&ctx));
-        return ctx.blocked;
+        return false;
     }
     void visibility()
     {
         show(panel, settings.panel);
-        show(strip, settings.strip && !stripSuppressed());
+        presentStrip();
     }
     void show(Surface &s, bool visible)
     {
         if (bool(IsWindowVisible(s.hwnd)) != visible || (visible && IsIconic(s.hwnd)))
         {
             ShowWindow(s.hwnd, visible ? SW_SHOWNOACTIVATE : SW_HIDE);
+            trace::line(L"panel: %s", visible ? L"shown" : L"hidden");
             if (visible)
                 paint(s);
         }
@@ -940,7 +817,7 @@ class Application
     {
         if (!IsWindowVisible(s.hwnd))
             return true;
-        if (!settings.locked || s.strip)
+        if (!settings.locked || desktopRaised)
             return false;
         RECT own{};
         GetWindowRect(s.hwnd, &own);
@@ -982,17 +859,13 @@ class Application
         s.dpi = float(GetDpiForWindow(s.hwnd));
         if (s.dpi < 48)
             s.dpi = 96;
-        auto p = palette(s.strip ? shellDark : dark, contrast);
-        // Inside the taskbar the strip draws no background of its own, so the
-        // bar shows through and it reads as part of it rather than as a card
-        // resting on top. Above the taskbar it still needs its own plate.
-        const bool embedded = stripEmbedded(s);
+        auto p = palette(dark, contrast);
         if (!contrast)
-            p.surface.a = s.strip ? .62f : settings.opacity / 100.f;
+            p.surface.a = settings.opacity / 100.f;
         if (!s.bitmap.resize(w, h))
             return;
-        auto hr = renderer.drawBitmap(s.bitmap, s.dpi, snapshot, p, s.strip, settings.locked, s.scroll,
-                                      settings.range, embedded);
+        auto hr = renderer.drawBitmap(s.bitmap, s.dpi, snapshot, p, false, settings.locked, s.scroll,
+                                      settings.range);
         if (FAILED(hr))
             return;
         POINT src{};
@@ -1000,16 +873,44 @@ class Application
         BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
         UpdateLayeredWindow(s.hwnd, nullptr, nullptr, &size, s.bitmap.dc, &src, 0, &blend, ULW_ALPHA);
     }
+    // Hands the strip thread everything it needs for its next frame. The strip
+    // decides nothing itself; placement and visibility are decided here.
+    void presentStrip()
+    {
+        if (!stripValid)
+            return;
+        StripFrame f;
+        f.rect = stripRect;
+        // At launch the taskbar layout arrives a few tens of milliseconds after
+        // the first placement. Waiting for it avoids the strip appearing above
+        // the taskbar and then jumping inside.
+        const bool settled = !settings.insideTaskbar || stripInside || GetTickCount64() - launchedMs > 1500;
+        f.visible = settings.strip && settled && !stripSuppressed();
+        f.locked = settings.locked;
+        f.embedded = stripEmbedded();
+        f.dark = shellDark;
+        f.range = settings.range;
+        f.palette = palette(shellDark, contrast);
+        if (!contrast)
+            f.palette.surface.a = .62f;
+        // The strip draws only the overall history and current values.
+        f.snapshot.history = snapshot.history;
+        f.snapshot.current = snapshot.current;
+        f.snapshot.paused = snapshot.paused;
+        f.snapshot.updatedMs = snapshot.updatedMs;
+        f.text = renderer.accessibleText(snapshot, true, settings.range);
+        stripHost.present(std::move(f));
+    }
     void paintBoth()
     {
         paint(panel);
-        paint(strip);
+        presentStrip();
     }
     void describe(Surface &s)
     {
         // Window text is what the UI Automation provider reads back. Setting it
         // broadcasts a name-change event system wide, so only write real changes.
-        auto text = renderer.accessibleText(snapshot, s.strip, settings.range);
+        auto text = renderer.accessibleText(snapshot, false, settings.range);
         if (text == s.appliedText)
             return;
         s.appliedText = text;
@@ -1020,12 +921,11 @@ class Application
         if (!options.demo)
             snapshot = collector.snapshot();
         describe(panel);
-        describe(strip);
         if (!snapshot.paused)
         {
             if (!occluded(panel))
                 paint(panel);
-            paint(strip);
+            presentStrip();
         }
         std::wstring tooltip = L"CPU " + formatPercent(snapshot.current[0]) + L" | GPU " +
                                formatPercent(snapshot.current[1]) + L"\nVRAM " +
@@ -1201,6 +1101,7 @@ class Application
         add(Startup, L"Start with Windows", startupEnabled(exe), options.isolated);
         add(Pause, L"Pause monitoring", paused);
         add(About, L"About / diagnostics…");
+        add(TraceToggle, L"Record placement trace", trace::enabled());
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         add(Uninstall, L"Uninstall…");
         add(Exit, L"Exit");
@@ -1301,7 +1202,7 @@ class Application
         WNDCLASSEXW c{sizeof(c)};
         c.hInstance = instance;
         c.lpfnWndProc = opacityProc;
-        c.lpszClassName = L"NativePerfMonitor.Opacity.1.4";
+        c.lpszClassName = L"NativePerfMonitor.Opacity.1.5";
         c.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         RegisterClassExW(&c);
         auto area = primaryInfo().rcWork;
@@ -1456,6 +1357,21 @@ class Application
         case About:
             MessageBoxW(controller, diagnostics().c_str(), L"Performance monitor — diagnostics", MB_OK);
             return;
+        case TraceToggle:
+            if (trace::enabled())
+            {
+                trace::stop();
+                trayNotice(L"Placement trace saved to " + (data / L"trace.log").wstring());
+            }
+            else
+            {
+                trace::start(data / L"trace.log");
+                trace::line(L"trace: started from the tray menu; desktop %s, strip %s",
+                            desktopRaised ? L"raised" : L"in place",
+                            stripInside ? L"inside the taskbar" : L"above the taskbar");
+                trayNotice(L"Recording placement trace. Reproduce the problem, then choose this again.");
+            }
+            return;
         case Uninstall:
         {
             auto uninstaller = exe.parent_path() / L"Uninstall.exe";
@@ -1569,10 +1485,14 @@ class Application
         }
         if (m == taskbarCreated && taskbarCreated)
         {
-            // Explorer restarted: the new taskbar sits above the strip and the
-            // desktop host is a different window, so nothing cached still holds.
+            // Explorer restarted. The strip thread notices its owner is gone on
+            // the next frame and rebuilds under the new taskbar; the desktop
+            // host is a new window, so its state is read afresh.
+            trace::line(L"explorer: TaskbarCreated");
             addTray();
             invalidatePlacement();
+            desktopRaised = desktopRaisedNow();
+            placePanelLayer();
             taskbarObserver.request();
             layout();
             paintBoth();
@@ -1613,22 +1533,55 @@ class Application
             return TRUE;
         case taskbarLayoutMessage:
             layout();
-            paint(strip);
             return 0;
         case geometryMessage:
             taskbarObserver.request();
-            SetTimer(h, 2, geometryDelayMs, nullptr);
+            SetTimer(h, geometryTimer, geometryDelayMs, nullptr);
+            return 0;
+        case desktopMessage:
+            // Explorer raises or lowers the desktop a few milliseconds around
+            // the foreground change, so look now and twice more shortly after.
+            checkDesktop();
+            desktopRechecks = 3;
+            SetTimer(h, desktopRecheckTimer, 40, nullptr);
+            return 0;
+        case stripMovedMessage:
+        {
+            auto area = primaryInfo().rcWork;
+            settings.stripX = int((int(l) - area.left) * 96.f / panel.dpi);
+            trace::line(L"strip: dragged to x=%d", int(l));
+            invalidatePlacement();
+            layout();
+            persist();
+            return 0;
+        }
+        case stripMenuMessage:
+            menu();
+            return 0;
+        case stripClosedMessage:
+            settings.strip = false;
+            syncObserver();
+            visibility();
+            persist();
             return 0;
         case WM_TIMER:
-            if (w == 2)
+            if (w == geometryTimer)
             {
-                KillTimer(h, 2);
+                KillTimer(h, geometryTimer);
                 geometryPending = false;
                 layout();
                 if (!occluded(panel))
                     paint(panel);
             }
-            else if (w == 1)
+            else if (w == desktopRecheckTimer)
+            {
+                checkDesktop();
+                if (--desktopRechecks <= 0)
+                    KillTimer(h, desktopRecheckTimer);
+            }
+            else if (w == desktopTimer)
+                checkDesktop();
+            else if (w == reconcileTimer)
             {
                 layout();
                 if (snapshot.updatedMs && GetTickCount64() > snapshot.updatedMs + 4000 && !snapshot.paused)
@@ -1654,9 +1607,12 @@ class Application
                 Shell_NotifyIconW(NIM_DELETE, &tray);
                 collector.stop();
                 taskbarObserver.stop();
+                // Stopped before the controller goes: the strip thread posts to it.
+                stripHost.stop();
+                trace::stop();
                 if (opacityWindow)
                     DestroyWindow(opacityWindow);
-                DestroyWindow(strip.hwnd);
+                DestroyWindow(probe);
                 DestroyWindow(panel.hwnd);
                 DestroyWindow(h);
             }
@@ -1671,6 +1627,14 @@ class Application
     {
         switch (m)
         {
+        case WM_WINDOWPOSCHANGING:
+            // The locked panel refuses every z-order change it did not ask for:
+            // activation, ShowWindow, another program's SetWindowPos. Its own
+            // placement passes SWP_NOSENDCHANGING and never arrives here. This
+            // is what keeps it at desktop level without watching or repairing.
+            if (settings.locked)
+                reinterpret_cast<WINDOWPOS *>(l)->flags |= SWP_NOZORDER;
+            break;
         case WM_SYSCOMMAND:
             if ((w & 0xfff0) == SC_MINIMIZE && settings.locked)
                 return 0;
@@ -1698,28 +1662,25 @@ class Application
             RECT r{};
             GetClientRect(s.hwnd, &r);
             int edge = int(6 * s.dpi / 96);
-            if (!s.strip)
-            {
-                bool left = point.x < edge, right = point.x >= r.right - edge, top = point.y < edge,
-                     bottom = point.y >= r.bottom - edge;
-                if (top && left)
-                    return HTTOPLEFT;
-                if (top && right)
-                    return HTTOPRIGHT;
-                if (bottom && left)
-                    return HTBOTTOMLEFT;
-                if (bottom && right)
-                    return HTBOTTOMRIGHT;
-                if (left)
-                    return HTLEFT;
-                if (right)
-                    return HTRIGHT;
-                if (top)
-                    return HTTOP;
-                if (bottom)
-                    return HTBOTTOM;
-            }
-            return point.y < int(43 * s.dpi / 96) || s.strip ? HTCAPTION : HTCLIENT;
+            bool left = point.x < edge, right = point.x >= r.right - edge, top = point.y < edge,
+                 bottom = point.y >= r.bottom - edge;
+            if (top && left)
+                return HTTOPLEFT;
+            if (top && right)
+                return HTTOPRIGHT;
+            if (bottom && left)
+                return HTBOTTOMLEFT;
+            if (bottom && right)
+                return HTBOTTOMRIGHT;
+            if (left)
+                return HTLEFT;
+            if (right)
+                return HTRIGHT;
+            if (top)
+                return HTTOP;
+            if (bottom)
+                return HTBOTTOM;
+            return point.y < int(43 * s.dpi / 96) ? HTCAPTION : HTCLIENT;
         }
         case WM_MOUSEACTIVATE:
             if (settings.locked)
@@ -1742,8 +1703,7 @@ class Application
         case WM_SIZING:
         {
             auto r = reinterpret_cast<RECT *>(l);
-            auto info = primaryInfo();
-            auto a = s.strip ? info.rcMonitor : info.rcWork;
+            auto a = primaryInfo().rcWork;
             auto c = clampRect({r->left, r->top, r->right - r->left, r->bottom - r->top},
                                {a.left, a.top, a.right - a.left, a.bottom - a.top}, 1, 1);
             *r = {c.x, c.y, c.x + c.w, c.y + c.h};
@@ -1758,16 +1718,11 @@ class Application
             GetWindowRect(s.hwnd, &r);
             auto area = primaryInfo().rcWork;
             auto scale = s.dpi / 96.f;
-            if (s.strip)
-                settings.stripX = int((r.left - area.left) / scale);
-            else
-            {
-                settings.panelX = int((r.left - area.left) / scale);
-                settings.panelY = int((r.top - area.top) / scale);
-                settings.panelW = int((r.right - r.left) / scale);
-                settings.panelH = int((r.bottom - r.top) / scale);
-                settings.compact = false;
-            }
+            settings.panelX = int((r.left - area.left) / scale);
+            settings.panelY = int((r.top - area.top) / scale);
+            settings.panelW = int((r.right - r.left) / scale);
+            settings.panelH = int((r.bottom - r.top) / scale);
+            settings.compact = false;
             layout();
             persist();
             paintBoth();
@@ -1795,7 +1750,7 @@ class Application
             paint(s);
             return 0;
         case WM_MOUSEWHEEL:
-            if (!settings.locked && !s.strip)
+            if (!settings.locked)
             {
                 RECT r{};
                 GetClientRect(s.hwnd, &r);
@@ -1823,10 +1778,7 @@ class Application
             }
             return 0;
         case WM_CLOSE:
-            if (s.strip)
-                settings.strip = false;
-            else
-                settings.panel = false;
+            settings.panel = false;
             visibility();
             persist();
             return 0;
@@ -1859,11 +1811,11 @@ int renderPreview(const std::filesystem::path &dir)
                     const bool embedded = strip && opacity != 10;
                     if (FAILED(renderer.drawBitmap(b, 192, snapshot, p, strip, true, 0, range, embedded)))
                         return 4;
-                    auto name = std::wstring(strip ? L"strip-" : L"panel-") + (dark ? L"dark-" : L"light-") +
-                                (range == Range::Minutes ? L"60min-" : L"60sec-") +
-                                (strip ? std::wstring(embedded ? L"embedded" : L"plate")
-                                       : std::to_wstring(opacity)) +
-                                L".png";
+                    auto name =
+                        std::wstring(strip ? L"strip-" : L"panel-") + (dark ? L"dark-" : L"light-") +
+                        (range == Range::Minutes ? L"60min-" : L"60sec-") +
+                        (strip ? std::wstring(embedded ? L"embedded" : L"plate") : std::to_wstring(opacity)) +
+                        L".png";
                     if (!b.save(dir / name))
                         return 5;
                     if (strip && opacity != 10)
@@ -1880,7 +1832,7 @@ int WINAPI wWinMain(HINSTANCE h, HINSTANCE, PWSTR, int)
     {
         auto existing = FindWindowW(controlClass, nullptr);
         if (existing)
-            PostMessageW(existing, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.4"), 0, 0);
+            PostMessageW(existing, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.5"), 0, 0);
         if (options.prepare)
         {
             std::wstring error;

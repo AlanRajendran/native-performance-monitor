@@ -19,7 +19,7 @@ int WINAPI wWinMain(HINSTANCE h, HINSTANCE, PWSTR arguments, int)
         TASKDIALOGCONFIG config{sizeof(config)};
         config.hInstance = h;
         config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT;
-        config.pszWindowTitle = L"Install Native Performance Monitor 1.4";
+        config.pszWindowTitle = L"Install Native Performance Monitor 1.5";
         config.pszMainInstruction = L"Set up Native Performance Monitor";
         config.pszContent = message.c_str();
         config.pszVerificationText = L"Start automatically when I sign in to Windows";
@@ -46,7 +46,7 @@ int WINAPI wWinMain(HINSTANCE h, HINSTANCE, PWSTR arguments, int)
                     return 0;
                 }
                 auto portable = perf::executablePath().parent_path() / L"PerfMonitor.exe";
-                auto running = FindWindowW(L"NativePerfMonitor.Controller.1.4", nullptr);
+                auto running = FindWindowW(L"NativePerfMonitor.Controller.1.5", nullptr);
                 if (running)
                 {
                     DWORD pid = 0;
@@ -60,7 +60,7 @@ int WINAPI wWinMain(HINSTANCE h, HINSTANCE, PWSTR arguments, int)
                             _wcsicmp(path, portable.c_str()) == 0)
                         {
                             PostMessageW(running,
-                                         RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.4"), 0,
+                                         RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.5"), 0,
                                          0);
                             WaitForSingleObject(process, 5000);
                         }

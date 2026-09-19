@@ -64,7 +64,7 @@ int wmain(int argc, wchar_t **argv)
             CoUninitialize();
             return 77;
         }
-        require(!FindWindowW(L"NativePerfMonitor.Controller.1.4", nullptr),
+        require(!FindWindowW(L"NativePerfMonitor.Controller.1.5", nullptr),
                 "no existing monitor; tests must not interrupt a user instance");
         auto exe = std::filesystem::absolute(argv[1]), root = std::filesystem::absolute(argv[2]);
         std::filesystem::create_directories(root);
@@ -74,7 +74,7 @@ int wmain(int argc, wchar_t **argv)
         HWND control = nullptr;
         for (int i = 0; i < 150; ++i)
         {
-            control = FindWindowW(L"NativePerfMonitor.Controller.1.4", nullptr);
+            control = FindWindowW(L"NativePerfMonitor.Controller.1.5", nullptr);
             if (control)
                 break;
             pump(20);
@@ -94,7 +94,10 @@ int wmain(int argc, wchar_t **argv)
                 GetWindowThreadProcessId(h, &pid);
                 wchar_t c[128];
                 GetClassNameW(h, c, 128);
-                if (pid == m.pid && wcscmp(c, L"NativePerfMonitor.Surface.1.4") == 0)
+                // The panel and the strip; the strip has its own class because
+                // it lives on its own thread (see src/striphost.h).
+                if (pid == m.pid && (wcscmp(c, L"NativePerfMonitor.Surface.1.5") == 0 ||
+                                     wcscmp(c, L"NativePerfMonitor.Strip.1.5") == 0))
                     m.windows.push_back(h);
                 return TRUE;
             },
@@ -181,7 +184,7 @@ int wmain(int argc, wchar_t **argv)
         SendMessageW(control, WM_COMMAND, 115, 0);
         require(loadSettings(root / L"settings").opacity == 25, "opacity menu restores default");
         SendMessageW(control, WM_COMMAND, 117, 0);
-        auto opacity = FindWindowW(L"NativePerfMonitor.Opacity.1.4", nullptr);
+        auto opacity = FindWindowW(L"NativePerfMonitor.Opacity.1.5", nullptr);
         require(opacity != nullptr, "tray command opens opacity slider");
         auto track = GetDlgItem(opacity, 501);
         require(track && SendMessageW(track, TBM_GETRANGEMIN, 0, 0) == 10 &&
@@ -242,20 +245,28 @@ int wmain(int argc, wchar_t **argv)
         require(historyCount() > before, "core histories continue while hidden");
         SendMessageW(control, WM_COMMAND, 100, 0);
         require(IsWindowVisible(panel), "restore panel");
+        // The locked panel refuses z-order changes it did not make itself; that
+        // refusal is what keeps it at desktop level without any repair loop.
         SetWindowPos(panel, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         pump(200);
-        POINT center{(sr.left + sr.right) / 2, (sr.top + sr.bottom) / 2};
-        if (WindowFromPoint(center) != target)
+        require(!(GetWindowLongPtrW(panel, GWL_EXSTYLE) & WS_EX_TOPMOST),
+                "locked panel refuses restacking by another process");
+        // The strip genuinely overlaps the taskbar, so it is where cross-process
+        // click-through can be observed: the pointer must reach the taskbar.
         {
-            wchar_t cls[128]{};
-            GetClassNameW(WindowFromPoint(center), cls, 128);
-            std::wcout << L"Hit class: " << cls << L" panel visible=" << IsWindowVisible(panel)
-                       << L" target visible=" << IsWindowVisible(target) << L" point=" << center.x << L","
-                       << center.y << L"\n";
+            RECT st{};
+            GetWindowRect(strip, &st);
+            POINT inside{(st.left + st.right) / 2, (st.top + st.bottom) / 2};
+            auto hit = WindowFromPoint(inside);
+            require(hit != strip, "locked strip passes the pointer through to the taskbar");
+            auto bar = FindWindowW(L"Shell_TrayWnd", nullptr);
+            require(bar && GetWindow(strip, GW_OWNER) == bar, "strip is owned by the taskbar");
         }
+        ShowWindow(target, SW_HIDE);
+        pump(150);
+        POINT center{(sr.left + sr.right) / 2, (sr.top + sr.bottom) / 2};
         auto underlying = WindowFromPoint(center);
-        require(underlying == target,
-                "cross-process locked hit testing reaches the underlying taskbar or test window");
+        require(underlying != panel, "locked panel does not take the pointer");
         auto foreground = GetForegroundWindow();
         SendMessageW(control, WM_COMMAND, 102, 0);
         pump(250);
@@ -264,7 +275,7 @@ int wmain(int argc, wchar_t **argv)
         {
             wchar_t cls[128]{};
             GetClassNameW(WindowFromPoint(center), cls, 128);
-            std::wcout << L"Unlocked hit: " << cls << L"\n";
+            std::wcout << L"Unlocked hit: " << cls << L" ";
         }
         require(WindowFromPoint(center) == panel, "unlocked panel accepts pointer targeting");
         require(GetForegroundWindow() == foreground, "lock toggle does not steal focus");
@@ -273,8 +284,8 @@ int wmain(int argc, wchar_t **argv)
                 "unlock retains alpha-composited surfaces");
         SendMessageW(control, WM_COMMAND, 102, 0);
         pump(150);
-        require(WindowFromPoint(center) == underlying, "relocking restores cross-process pass-through");
-        SetWindowPos(panel, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        require(WindowFromPoint(center) == underlying, "relocking returns the panel to the desktop layer");
+        ShowWindow(target, SW_SHOWNOACTIVATE);
         // The panel must precede the desktop host in top-to-bottom enumeration.
         bool sawPanel = false;
         bool panelAboveDesktop = false;
@@ -364,14 +375,14 @@ int wmain(int argc, wchar_t **argv)
                 break;
             }
         }
-        require(behindOrdinary, "periodic reconciliation keeps panel behind normal app window");
+        require(behindOrdinary, "locked panel stays behind a normal app window");
         auto duplicate = launch(exe, root / L"settings");
         require(WaitForSingleObject(duplicate.hProcess, 5000) == WAIT_OBJECT_0, "duplicate launch exits");
         CloseHandle(duplicate.hProcess);
         require(IsWindowVisible(panel), "duplicate launch restores instead of toggling panel off");
         DestroyWindow(target);
         target = nullptr;
-        SendMessageW(control, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.4"), 0, 0);
+        SendMessageW(control, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.5"), 0, 0);
         require(WaitForSingleObject(process.hProcess, 5000) == WAIT_OBJECT_0, "clean shutdown");
         DWORD code = 99;
         GetExitCodeProcess(process.hProcess, &code);
@@ -434,9 +445,9 @@ int wmain(int argc, wchar_t **argv)
             DestroyWindow(target);
         if (process.hProcess)
         {
-            auto control = FindWindowW(L"NativePerfMonitor.Controller.1.4", nullptr);
+            auto control = FindWindowW(L"NativePerfMonitor.Controller.1.5", nullptr);
             if (control)
-                PostMessageW(control, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.4"), 0, 0);
+                PostMessageW(control, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.5"), 0, 0);
             if (WaitForSingleObject(process.hProcess, 5000) != WAIT_OBJECT_0)
                 TerminateProcess(process.hProcess, 4);
             CloseHandle(process.hProcess);

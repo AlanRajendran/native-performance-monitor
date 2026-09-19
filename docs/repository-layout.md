@@ -27,7 +27,10 @@
 
 | File                        | Responsibility                                      |
 | --------------------------- | --------------------------------------------------- |
-| `src/app.cpp`               | windows, message loops, placement, tray menu, entry  |
+| `src/app.cpp`               | controller, panel, desktop layer, placement decisions, tray menu, entry |
+| `src/striphost.{h,cpp}`     | the taskbar strip on its own thread, owned by the taskbar |
+| `src/accessibility.h`       | read-only UI Automation provider shared by both surfaces |
+| `src/trace.{h,cpp}`         | optional placement trace (`--trace`, tray menu)      |
 | `src/collector.{h,cpp}`     | PDH/DXGI sampling thread and the `Snapshot` it makes |
 | `src/core.{h,cpp}`          | pure logic: history rings, ranking, geometry, formatting |
 | `src/cpu.{h,cpp}`           | CPU topology and name via CPUID                      |
@@ -66,7 +69,7 @@ ctest --test-dir build -C Release --output-on-failure
 Requires MSVC and the Windows 11 SDK. The build is `/W4` and currently warning
 clean; keep it that way.
 
-`WindowTests` refuses to run while a monitor instance is already on the desktop,
+`WindowTests` refuses to run while a monitor instance of the same release line is already on the desktop,
 so it does not interfere with a copy the user is actually using. Close the
 running monitor before a full test run. It also reports 77 (skip) when there is
 no interactive Explorer shell, which is how it behaves in a sandbox.

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(NativePerfMonitor VERSION 1.4.0 LANGUAGES CXX RC)
+project(NativePerfMonitor VERSION 1.5.0 LANGUAGES CXX RC)
 if(NOT WIN32 OR NOT MSVC)
   message(FATAL_ERROR "Build with MSVC and the Windows 11 SDK on Windows.")
 endif()
@@ -10,7 +10,8 @@ add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _WIN32_WIN
 add_compile_options(/W4 /permissive- /utf-8 /EHsc)
 add_library(perf_core STATIC src/core.cpp)
 target_include_directories(perf_core PUBLIC src)
-add_library(perf_native STATIC src/collector.cpp src/settings.cpp src/render.cpp src/cpu.cpp src/taskbar.cpp)
+add_library(perf_native STATIC src/collector.cpp src/settings.cpp src/render.cpp src/cpu.cpp src/taskbar.cpp
+            src/striphost.cpp src/trace.cpp)
 target_link_libraries(perf_native PUBLIC perf_core pdh dxgi d2d1 dwrite dwmapi user32 gdi32 shell32 advapi32 ole32 windowscodecs psapi shlwapi windowsapp uiautomationcore)
 add_executable(PerfMonitor WIN32 src/app.cpp resources/app.rc)
 target_link_libraries(PerfMonitor PRIVATE perf_native comctl32)

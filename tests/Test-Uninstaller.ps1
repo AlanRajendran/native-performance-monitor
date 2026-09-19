@@ -4,7 +4,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $source = Split-Path -Parent $PSScriptRoot
-$identity = 'NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.4'
+$identity = 'NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.5'
 $TestRoot = [IO.Path]::GetFullPath($TestRoot)
 New-Item -ItemType Directory -Path $TestRoot -Force | Out-Null
 $assertions = 0

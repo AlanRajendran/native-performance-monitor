@@ -59,6 +59,29 @@ int wmain(int argc, wchar_t **argv)
         }
         require(!prepareUninstall(executablePath(), unowned, true, error), "unowned data removal refused");
         require(std::filesystem::exists(unowned / L"settings.ini"), "unowned settings preserved");
+        {
+            // A new release line carries the previous line's settings across
+            // once, reading them without touching the previous line's files.
+            auto lines = root / L"lines";
+            std::filesystem::remove_all(lines);
+            auto previous = lines / L"NativePerfMonitor-1.4", current = lines / L"NativePerfMonitor-1.5";
+            std::filesystem::create_directories(previous);
+            {
+                std::ofstream marker(previous / L".nativeperf-settings");
+                marker << "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.4\n";
+                std::ofstream ini(previous / L"settings.ini");
+                ini << "opacity=37\nlongRange=1\nstripX=812\n";
+            }
+            Settings imported;
+            require(importPreviousSettings(current, imported), "previous line's settings found");
+            require(imported.opacity == 37 && imported.range == Range::Minutes && imported.stripX == 812,
+                    "previous line's choices imported");
+            require(!std::filesystem::exists(current), "import does not create or write the new directory");
+            std::ofstream(previous / L".nativeperf-settings") << "some other application\n";
+            Settings refused;
+            require(!importPreviousSettings(current, refused),
+                    "a directory another application owns is ignored");
+        }
         Renderer renderer;
         require(renderer.initialize(), "Direct2D initialized");
         auto sample = demonstrationSnapshot();

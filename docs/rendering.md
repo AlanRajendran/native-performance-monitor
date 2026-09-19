@@ -74,13 +74,13 @@ the bar. So it draws no plate, no border, no dividers, and its area fills are
 translucent, tinting the bar rather than covering it. Text and traces stay fully
 opaque.
 
-The window frame has to agree with this. `applyBackdrop()` sets
-`DWMWA_WINDOW_CORNER_PREFERENCE` to `DWMWCP_DONOTROUND` when embedded, and turns
-off `DWMWA_BORDER_COLOR` on both surfaces. DWM draws its own hairline border
-around a window, and on the embedded strip that border alone was enough to make
-it look like a floating card even with every drawn outline removed. Because the
-embedded state changes at runtime, `layout()` reapplies the backdrop whenever
-the strip moves in or out of the taskbar.
+The window frame has to agree with this. The strip thread sets
+`DWMWA_WINDOW_CORNER_PREFERENCE` to `DWMWCP_DONOTROUND` when embedded, and
+`DWMWA_BORDER_COLOR` is turned off on both surfaces. DWM draws its own hairline
+border around a window, and on the embedded strip that border alone was enough
+to make it look like a floating card even with every drawn outline removed. The
+embedded flag travels in each `StripFrame`, so the frame follows the strip in
+and out of the taskbar.
 
 ### If you add a mark
 

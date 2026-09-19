@@ -1,57 +1,76 @@
 # Troubleshooting
 
-## The strip flickers or blinks
+Start here for any placement problem: choose **Record placement trace** in the
+tray menu, reproduce the problem, and choose it again. The tray notification
+tells you where `trace.log` was saved. It records every z-order action the
+monitor takes and why, with timestamps, which is far more useful in a report
+than a description of what it looked like.
 
-Fixed in 1.4.0. If it returns, the cause is almost always that something made
-the strip's *visibility* decision oscillate, or made its *position* oscillate.
+## The strip blinks when I click the taskbar
 
-- Position: `settleStrip()` and the sticky slot preference in `layout()`
-- Visibility: `stripSuppressed()`, which restores only after a quiet period
+Fixed in 1.5. Clicking the taskbar raises it to the top of the topmost band;
+the strip is now *owned* by the taskbar, so the window manager carries it along
+in the same operation. If it blinks again, check the trace for
+`strip: found below the taskbar` lines — each one is a repair, and there should
+be none during ordinary taskbar use.
 
-Check **History → 60 seconds** is not being confused with the symptom: switching
-ranges repaints once, which is not a flicker.
+## The panel or strip disappears and only comes back after toggling it
+
+Fixed in 1.5. The usual cause was **Show Desktop** (Win+D, or the sliver at the
+far right of the taskbar): Windows 11 raises the desktop over every application
+window and refuses to let an ordinary window above it. The panel now becomes
+temporarily topmost while the desktop is raised, and the strip moves back above
+the taskbar within a frame or two. The trace shows `desktop: raised` and
+`desktop: back in place` for each transition.
+
+If you run an older copy from a Start menu or desktop shortcut, check which one:
+each release line installs to its own folder, and a shortcut from an earlier
+line launches the earlier build.
+
+## The panel is behind my windows
+
+While locked, the panel deliberately sits in the desktop layer — above the
+wallpaper, below every application — like a desktop widget. It refuses to be
+brought forward by anything, which is what keeps it stable.
+
+Unlock it (**Lock panel**) to treat it as an ordinary window you can bring to
+the front, move and resize.
 
 ## The strip jumps between positions in the taskbar
 
-The chosen gap is changing. The strip prefers the slot it already occupies and
-ignores drift under 12 px, so this means the current slot is genuinely being
-taken — usually by a taskbar item appearing or growing.
+The chosen gap is changing. The strip prefers the slot it already occupies,
+ignores drift under 12 px and moves at most every 1.5 s, so this means the
+current slot is genuinely being taken — usually by a taskbar item appearing or
+growing. The trace shows every move and whether the strip is inside or above
+the taskbar.
 
-Turn off **Prefer inside taskbar** in the tray menu to place it directly above
-the taskbar instead, which needs no gap search and no accessibility reads at all.
+Turn off **Prefer inside taskbar** to place it directly above the taskbar
+instead, which needs no gap search and no accessibility reads at all.
 
-## The panel disappears behind other windows
+## The strip hides during a game or video
 
-While locked, the panel deliberately sits just above the desktop, so ordinary
-windows cover it. That is the intended behaviour for a desktop widget.
-
-The z-order repair runs at most every two seconds and is **skipped entirely
-while a full-screen application owns the foreground** — reordering windows
-underneath an exclusive full-screen game can drop it out of its presentation
-mode. So a panel that stays buried while a game is running is working as
-designed.
-
-Unlock the panel (**Lock panel**) to bring it to the normal window layer.
+By design. A full-screen application in the foreground hides the strip, and it
+returns 700 ms after the application stops being full screen.
 
 ## The panel content is hard to read
 
-Opacity affects the background only. If text or graphs look washed out, that is
-a bug — see [rendering.md](rendering.md) for the rule. Everything except the
-rounded background rectangle is drawn fully opaque.
-
-If the whole panel is hard to read against a busy wallpaper, raise the opacity
-in **Panel opacity…**; the graphs sit on opaque cards and stay legible at any
-setting.
+Opacity affects the background only; text, traces, grids and graph cards are
+always opaque. If the whole panel is hard to read against a busy wallpaper,
+raise the opacity in **Panel opacity…**.
 
 ## The taskbar or Explorer feels sluggish
 
-Reading the taskbar layout means walking Explorer's accessibility tree across a
-process boundary, which drives Explorer's own UI thread. The monitor does this
-only while **Taskbar strip** *and* **Prefer inside taskbar** are both on, at most
-every two seconds and normally every eight.
+Two things touch Explorer, both deliberately light:
 
-To rule it out completely, turn off **Prefer inside taskbar**. If the sluggishness
-persists, it is not this.
+- **Reading the taskbar layout** walks Explorer's accessibility tree. It runs
+  only while both **Taskbar strip** and **Prefer inside taskbar** are on, at most
+  every two seconds and normally every eight.
+- **The strip's owner relationship** attaches its thread's input queue to the
+  taskbar's. That thread only ever places and draws a small bitmap, so it cannot
+  hold the taskbar up.
+
+To rule both out, turn off **Taskbar strip**. If the sluggishness persists, it
+is not this program.
 
 ## Values show as dashes
 
@@ -72,20 +91,17 @@ The header shows `Stale` when the last sample is more than four seconds old, and
 the panel is hidden or covered, so a gap in history means the process was
 actually stopped, suspended or asleep.
 
-Resume from sleep resets the counters deliberately: PDH deltas across a suspend
-are meaningless.
-
 ## Nothing appears at all
 
 - Check the tray icon. **Desktop panel** and **Taskbar strip** are independent
   toggles and either can be off.
-- A full-screen application suppresses the strip by design.
 - **Reset positions** recovers a surface that was dragged off-screen or onto a
   monitor that no longer exists.
-- Only one instance runs at a time. Launching a second one restores the first
-  rather than starting another.
+- Only one instance of a release line runs at a time. Launching a second one
+  restores the first rather than starting another.
 
 ## Tests fail with "no existing monitor"
 
-`WindowTests` refuses to run while a monitor is live on the desktop, so it cannot
-interfere with a copy you are using. Exit the running monitor and re-run.
+`WindowTests` refuses to run while a monitor of the same release line is live on
+the desktop, so it cannot interfere with a copy you are using. Exit the running
+monitor and re-run.

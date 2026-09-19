@@ -1,189 +1,173 @@
 # Window placement
 
-Placement is where every stability problem in this program has lived. This
-document explains the rules, because they are not obvious from the code and
-because breaking them is how the flickering came back the last two times.
+Placement is where every stability problem in this program has lived. 1.3 and
+1.4 both tried to keep the surfaces in place by *watching and repairing*: poll
+the z-order, notice a surface in the wrong place, put it back. That design
+cannot work on Windows 11, and 1.5 replaces it. This document explains why, and
+the rules that keep it working.
 
-## The one rule
+## What was actually going wrong
 
-**Placement is edge triggered.** A pass computes what the surfaces *should*
-look like, compares that against what the shell was *last told*, and calls into
-the window manager only for the parts that differ.
+Measured on Windows 11 25H2 (build 26200) with a 10 ms z-order recorder while
+reproducing the reported triggers:
 
-The 1.3.0 code was level triggered: once a second, and on every accepted shell
-event, it recomputed the geometry and reapplied all of it unconditionally. That
-works only while every input is perfectly stable. In practice several inputs are
-derived from a live scan of the desktop, and any one of them oscillating turned
-directly into visible movement, because nothing in the chain compared anything.
+| Trigger | 1.4 | 1.5 |
+| --- | --- | --- |
+| Clicking or keyboard-navigating the taskbar | strip covered **246 ms**, every time | **0 ms** |
+| Opening an ordinary window | no effect | no effect |
+| Show Desktop (Win+D, the taskbar corner) | panel hidden **for the whole duration**; strip lost **permanently** | panel visible after **~49 ms**; strip after **~31 ms** |
+| Leaving Show Desktop | — | both back in place within **~30 ms** |
 
-If you add a new input to placement, assume it will oscillate on somebody's
-machine, and damp it.
+Two separate mechanisms were responsible.
 
-## What a pass does
+**The taskbar covers anything that is merely topmost.** Whenever the taskbar is
+activated, Explorer raises it to the top of the topmost band. A strip that is
+just another topmost window ends up underneath and can only be put back after
+the fact. 1.4 did that after its 250 ms debounce — a quarter-second blink on
+every taskbar click.
 
-`Application::layout()` runs one pass:
+**Show Desktop cannot be repaired with an ordinary window.** Windows 11 does not
+minimize windows for Show Desktop; it raises the desktop host (`Progman`) above
+every application window. While it is raised, `SetWindowPos(panel, HWND_TOP)`
+**returns success and changes nothing** — verified directly. Every repair 1.3
+and 1.4 made in that state "succeeded" and left the panel buried. Only a topmost
+window can be above the raised desktop.
 
-1. Read the monitor work area and DPI.
-2. Compute the panel rectangle from the settings, clamped to the work area.
-3. `applyGeometry(panel, rect)` — compares and moves only if needed.
-4. `restack()` — repairs the panel's z-order, rate limited (see below).
-5. Compute the strip rectangle, either inside the taskbar or above it.
-6. `settleStrip()` — damps the horizontal position (see below).
-7. `applyGeometry(strip, rect)`, then `keepStripAbove()` — re-asserts topmost
-   only when the taskbar is observed to be above the strip.
-8. `visibility()` — show or hide each surface.
+## The design
 
-A pass is cheap when nothing changed, which is the normal case. That is the
-point: it is safe to run often precisely because it usually does nothing.
+### The strip is owned by the taskbar
+
+`StripHost` creates the strip with `Shell_TrayWnd` as its **owner**. The window
+manager keeps an owned window above its owner as part of the same operation that
+moves the owner, so the taskbar cannot rise over the strip even for a frame.
+From the `SetWindowPos` documentation: *"Any window … owned by a topmost window
+is itself made a topmost window, to ensure that all owned windows stay above
+their owner."*
+
+That guarantee has one hole. A caller can reposition a window with
+`SWP_NOOWNERZORDER`, which skips the owner adjustment, and Explorer's Show
+Desktop path does exactly that: afterwards the taskbar sits above the strip and
+nothing moves it back. So the strip also runs `keepAboveTaskbar()`: on every
+foreground change, every 250 ms, and on every frame, it walks up the z-order from
+itself; if the taskbar is above it, it moves directly above the taskbar. In
+normal use the walk finds nothing and costs nothing.
+
+### The strip has its own thread
+
+Ownership across processes **attaches the input queues** of the two threads
+(Raymond Chen, [*Is it legal to have a cross-process parent/child or owner/owned
+window relationship?*][chen-cross]). If the thread that owns the strip ever
+stopped pumping messages while input was pending for it, input to the taskbar
+would stall with it.
+
+So the strip lives on a dedicated thread that does nothing but place and draw a
+344×42 bitmap. Panel rendering, menus, dialogs and counter queries all run
+elsewhere and can never delay the taskbar. The strip thread reads no application
+state: the UI thread hands it a complete `StripFrame` (rectangle, visibility,
+palette, the few values it draws) under a mutex, and it posts back only a
+handful of messages (dragged, menu requested, closed).
+
+Explorer's taskbar and desktop run on **different threads** (checked: 9476 and
+9068 on the test machine). If one of our threads were owned by both, it would
+transitively couple Explorer's taskbar and desktop threads to each other. That
+is one reason the panel is *not* owned by `Progman`, even though that would also
+work: it uses the technique below instead, which couples to nothing.
+
+### The panel lives in the desktop layer
+
+The locked panel belongs just above the wallpaper and below every application.
+
+1. It is placed with `HWND_BOTTOM`. Because the shell window is special, this
+   lands directly above `Progman`.
+2. Its `WM_WINDOWPOSCHANGING` sets `SWP_NOZORDER` on every z-order change it did
+   not make itself — activation, `ShowWindow`, another program's
+   `SetWindowPos`. Its own placement passes `SWP_NOSENDCHANGING` and never sees
+   the veto. With this in place nothing in normal use can move it, so there is
+   nothing to repair.
+3. **Show Desktop** is detected with a hidden probe window kept at
+   `HWND_BOTTOM`. Normally the probe sits just above the desktop host; while the
+   host is raised, the probe is below it. `FindWindowEx(nullptr, host, probe)`
+   therefore answers the question in one call.
+4. While the desktop is raised, the panel becomes topmost and is inserted just
+   below the lowest other topmost window — the bottom of the topmost band — so
+   it covers the raised desktop and nothing else. When the desktop drops back,
+   `HWND_BOTTOM` clears topmost and returns it to the desktop layer in a single
+   call, never passing over application windows.
+
+The check runs on every foreground change (Show Desktop begins and ends with
+one), three more times over the following 120 ms because Explorer raises the
+desktop a few milliseconds around the event, and every 250 ms as a backstop.
+
+Steps 2–4 are the technique [Rainmeter][rainmeter-system] uses for its "On
+Desktop" skins, including its handling of the desktop host moving under
+`Progman` in Windows 11 24H2. The probe was verified on 25H2 before relying on
+it: normal → Show Desktop → restored read as normal → raised → normal.
 
 ## What may be cached, and what may not
 
-This is the distinction the whole subsystem turns on.
-
-**Position and size may be cached.** Nothing else moves these windows. What was
-last passed to `SetWindowPos` is still true, so comparing against it is sound.
+**Position and size may be cached.** Nothing else moves these windows. A pass
+that computes the same rectangle calls nothing.
 
 **Z-order may not be cached.** Any process can restack any window at any time
-without telling us. A remembered anchor says what we last *asked for*, which is
-not evidence of where the window actually sits now. Z-order has to be observed
-on each pass and acted on when it is wrong.
+without telling us. 1.4 briefly compared against a remembered anchor, which
+suppressed the very repair that was needed. In 1.5 z-order is either protected
+(the panel's veto), carried (the strip's owner), or observed at the moment of
+use (`keepAboveTaskbar`, the probe). It is never remembered.
 
-Getting this wrong is not theoretical: 1.4.0 briefly cached the z-order anchor
-alongside the rectangle, and the result was that the surfaces would sink behind
-the wallpaper host or the taskbar and never come back, because the repair that
-would have fixed it was suppressed by a comparison against a stale anchor. The
-symptom was surfaces vanishing until the user toggled them off and on in the
-tray menu — toggling worked only because `ShowWindow` raises a window within its
-band as a side effect.
+## Things not to do
 
-Each `Surface` therefore records:
-
-| Field          | Meaning                                       |
-| -------------- | --------------------------------------------- |
-| `applied`      | rectangle passed to the last `SetWindowPos`   |
-| `appliedValid` | false until the first successful placement    |
-| `appliedText`  | last string written with `SetWindowTextW`     |
-
-`applyGeometry()` compares against `applied` and returns without calling
-anything when the rectangle still matches. `applyZOrder()` has no cache and
-always calls the shell; its callers are responsible for having just observed
-that the window is in the wrong place:
-
-- **Panel** — `desktopAnchor()` walks the z-order and returns the panel's own
-  handle when it is already sitting correctly, so a stable desktop costs one
-  enumeration and no shell call.
-- **Strip** — `stripBelowTaskbar()` walks upwards from the strip and reports
-  whether `Shell_TrayWnd` is above it, which is the only way it can be hidden.
-
-Both are rate limited by `restackIntervalMs`, which exists solely to bound how
-hard this pushes back when another program is restacking us repeatedly. It does
-not delay the first repair.
-
-A layered window keeps its old bitmap across a resize, so `applyGeometry()`
-repaints when the extent changed. Without that the new area shows stale pixels
-until something else happens to repaint.
-
-## Invalidation
-
-The position cache is dropped by `invalidatePlacement()` when the world
-genuinely changed:
-
-- Explorer restarted (`TaskbarCreated`) — the new taskbar sits above the strip
-  and the desktop host is a different window
-- `WM_DISPLAYCHANGE`, `WM_SETTINGCHANGE`, `WM_DPICHANGED`
-- lock state changed (`applyMode()`), which changes window styles and z-order band
-- the user issued a command, or finished dragging a surface
-
-1.3.0 instead ran an unconditional per-second
-`SetWindowPos(strip, HWND_TOPMOST, …)`, re-inserting the strip at the top of the
-topmost band on top of `Shell_TrayWnd` forever. Explorer re-asserts the
-taskbar's position on various shell events, and the old event hook accepted
-`Shell_TrayWnd` events, so the two could drive each other. Whether the loop
-closed depended on the Windows build and taskbar configuration, which is exactly
-the shape of a bug that hits some machines and not others.
-
-**Do not re-assert z-order on a timer, and do not skip the repair on a cached
-answer.** Observe, then act only when what you can see is wrong. That is the
-only formulation that is both stable and self-healing.
-
-## The damping constants
-
-All in `Application`, all deliberately generous:
-
-| Constant             | Value  | Protects against                                      |
-| -------------------- | ------ | ----------------------------------------------------- |
-| `restackIntervalMs`  | 600    | another program and this one restacking in a loop     |
-| `stripSettleMs`      | 1500   | the strip hopping between taskbar gaps                |
-| `stripRestoreMs`     | 700    | the strip blinking as a window passes over it         |
-| `stripDeadband`      | 12 px  | sub-icon drift in the taskbar layout                  |
-| `geometryDelayMs`    | 250    | bursts of shell events                                |
-
-And in `TaskbarObserver`:
-
-| Constant            | Value  | Protects against                            |
-| ------------------- | ------ | ------------------------------------------- |
-| `idleIntervalMs`    | 8000   | cost of walking Explorer's tree             |
-| `minimumIntervalMs` | 2000   | the same, when shell events keep arriving   |
-| `tolerance`         | 6 px   | a clock or weather label reflowing by a pixel |
-
-Lowering the strip and event constants makes the surfaces more responsive and
-less stable; that trade has already been made once in the wrong direction.
-`restackIntervalMs` is different in kind: it does not delay a repair, it only
-caps how often one can be repeated, so it is safe to keep short.
-
-## Strip stickiness
-
-`taskbarSlot()` returns the free gap nearest a preferred x. The preferred x is
-the slot the strip **already occupies**, not the user's configured position, so
-a taskbar change that does not touch the current slot returns the same answer.
-
-On top of that, `settleStrip()` keeps the current position when the drift is
-under `stripDeadband`, or when the last move was less than `stripSettleMs` ago.
-
-Before this, any change to the taskbar's contents re-picked the nearest gap. An
-app opening, a notification badge appearing, or the weather widget's text
-changing width would each move the strip. On a machine with widgets enabled that
-is close to continuous — which is why the strip twitched on some PCs and sat
-still on others.
-
-## Hiding the strip
-
-`hideStrip()` decides whether the strip should be suppressed: a full-screen
-foreground app, an auto-hidden taskbar, or a shell menu overlapping it.
-
-`stripSuppressed()` wraps it asymmetrically:
-
-- **Hide immediately.** A menu must never be covered, and hiding on its own
-  never looks like flicker.
-- **Restore only after `stripRestoreMs` of quiet.** A blink requires a hide
-  followed promptly by a show, so delaying the show is what actually removes it.
+- **Do not re-add a periodic z-order re-assertion.** That is what made 1.3 fight
+  Explorer. Observe, then act only when what you can see is wrong.
+- **Do not widen the WinEvent hooks.** Foreground and minimize are all placement
+  needs. The 1.3 range delivered focus, selection, state and location events from
+  every window in every process.
+- **Do not move work onto the strip thread.** Its only job is to never block.
+- **Do not own the panel by `Progman` from the same thread as the strip.** See
+  the transitive attachment above.
 
 ## Event sources
 
-| Source                                    | Cadence          | Handler              |
-| ----------------------------------------- | ---------------- | -------------------- |
-| `EVENT_SYSTEM_FOREGROUND`                 | on focus change  | debounced pass       |
-| `EVENT_OBJECT_SHOW` / `HIDE`              | filtered by class| debounced pass       |
-| `EVENT_SYSTEM_MINIMIZESTART` / `MINIMIZEEND` | on minimize   | debounced pass       |
-| `WM_TIMER` id 1                           | 1 s              | reconciliation pass  |
-| `TaskbarObserver`                         | 2–8 s            | pass + strip repaint |
-| `TaskbarCreated`                          | Explorer restart | invalidate + pass    |
+| Source | Cadence | Effect |
+| --- | --- | --- |
+| `EVENT_SYSTEM_FOREGROUND` | on focus change | desktop check now and 3× over 120 ms; strip verify; geometry pass after 250 ms |
+| `EVENT_SYSTEM_MINIMIZESTART` / `END` | on minimize | geometry pass after 250 ms |
+| desktop timer | 250 ms | desktop check, strip verify |
+| reconcile timer | 1 s | geometry pass, visibility recovery |
+| `TaskbarObserver` | 2–8 s | strip slot recalculated |
+| `TaskbarCreated` | Explorer restart | desktop state re-read; the strip rebuilds under the new taskbar on its next frame |
 
-The hook previously covered `EVENT_OBJECT_SHOW` through
-`EVENT_OBJECT_LOCATIONCHANGE` — ten event types including focus, all four
-selection events, state change and location change, from every window in every
-process. `OBJID_WINDOW` filtering removed the caret and control-level noise, but
-window-level location changes still arrive continuously while anything is being
-dragged, resized or animated. Each burst scheduled a pass, and each pass could
-repaint the whole panel in software.
+## The strip's slot inside the taskbar
 
-**Do not widen the hook range.** If you need to notice something new, prefer a
-specific event, and verify the cost while dragging a window around on a slow
-machine.
+`taskbarSlot()` returns the free gap nearest a preferred x. The preferred x is
+the slot the strip **already occupies**, so a taskbar change that does not touch
+the current slot returns the same answer. `settleStrip()` then ignores drift
+under 12 px and moves at most once every 1.5 s. Without this, an app opening, a
+badge appearing or the weather widget reflowing would each move the strip.
 
-## Why the once-a-second pass still exists
+| Constant | Value | Protects against |
+| --- | --- | --- |
+| `stripSettleMs` | 1500 | the strip hopping between taskbar gaps |
+| `stripDeadband` | 12 px | sub-icon drift in the taskbar layout |
+| `stripRestoreMs` | 700 | the strip returning too eagerly after a full-screen app |
+| `geometryDelayMs` | 250 | bursts of shell events |
+| `desktopIntervalMs` | 250 | Show Desktop poll, as Rainmeter uses |
+| `TaskbarObserver::idleIntervalMs` | 8000 | cost of walking Explorer's tree |
+| `TaskbarObserver::minimumIntervalMs` | 2000 | the same, while shell events keep arriving |
+| `TaskbarObserver::tolerance` | 6 px | a label reflowing by a pixel |
 
-It is the backstop. Anything the hooks do not observe — a window moving without
-emitting events, another program restacking the surfaces, a state the
-reconciliation logic did not anticipate — is repaired within a second. Because
-the pass is edge triggered it costs almost nothing when there is nothing to do.
+The strip is hidden in only two cases: a full-screen application in the
+foreground, and an auto-hidden taskbar that has slid away. It used to hide for
+menus and shell flyouts too, because a re-asserted topmost strip could end up
+above them. An owned strip sits directly above the taskbar, so anything the shell
+opens later lands above it naturally.
+
+## Diagnosing a report
+
+Choose **Record placement trace** in the tray menu (or start with `--trace`),
+reproduce the problem, and choose it again. `trace.log` in the settings folder
+then records every placement action with a timestamp and a thread id: Show
+Desktop transitions, panel layer changes, strip repairs and rebuilds, and every
+strip move with the reason. It is off otherwise and costs nothing.
+
+[chen-cross]: https://devblogs.microsoft.com/oldnewthing/20130412-00/?p=4683
+[rainmeter-system]: https://github.com/rainmeter/rainmeter/blob/master/Library/System.cpp
