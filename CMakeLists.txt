@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(NativePerfMonitor VERSION 1.6.0 LANGUAGES CXX RC)
+project(NativePerfMonitor VERSION 1.7.0 LANGUAGES CXX RC)
 if(NOT WIN32 OR NOT MSVC)
   message(FATAL_ERROR "Build with MSVC and the Windows 11 SDK on Windows.")
 endif()

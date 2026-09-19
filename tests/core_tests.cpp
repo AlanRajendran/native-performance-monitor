@@ -162,6 +162,39 @@ int main()
             auto moved = taskbarSlot(bar, taken, 344, 42, held->x, 8);
             require(!moved || moved->x != held->x, "a slot that is genuinely taken is given up");
         }
+        {
+            // GPU engine types as Windows names them, with and without an index.
+            require(engineType(L"pid_4_luid_0x0_0x1_phys_0_eng_3_engtype_3D") == L"3D", "plain engine type");
+            require(engineType(L"pid_4_luid_0x0_0x1_phys_0_eng_9_engtype_OFA_0") == L"OFA",
+                    "indexed engine type");
+            require(engineType(L"pid_4_luid_0x0_0x1_phys_0_eng_7_engtype_JPEG_Decode_1") == L"JPEG_Decode",
+                    "underscored engine type");
+            require(engineLabel(L"VideoDecode")->second == L"Video decode", "engine label");
+            require(!engineLabel(L"Security") && !engineLabel(L"VR"), "idle engine types are left out");
+            require(engineLabel(L"3D")->first < engineLabel(L"Copy")->first, "3D is listed first");
+        }
+        {
+            // Memory history: every second, and the latest sample of each minute.
+            MemoryHistory memory;
+            MemorySample m;
+            m.count = 1;
+            for (int64_t t = 0; t < 130; ++t)
+            {
+                m.owners[0] = {ownerId(L"app"), float(t), 0};
+                memory.push(t, m);
+            }
+            auto seconds = memory.ordered(Range::Seconds), minutes = memory.ordered(Range::Minutes);
+            require(seconds.back().tick == 129 && seconds.front().tick == 70, "sixty newest seconds kept");
+            require(seconds.back().find(ownerId(L"app"))->ram == 129.f, "owner found by key");
+            require(minutes.back().tick == 2 && minutes.back().owners[0].ram == 129.f,
+                    "a minute holds its latest sample");
+            require(minutes[historyPoints - 3].tick == 0 && minutes[historyPoints - 3].owners[0].ram == 59.f,
+                    "a finished minute keeps its last second");
+            memory.push(140, m);
+            seconds = memory.ordered(Range::Seconds);
+            require(seconds[historyPoints - 2].tick == -1 && seconds.back().tick == 140,
+                    "a pause leaves missing samples, not a false line");
+        }
         std::cout << checks << " core assertions passed\n";
         return 0;
     }

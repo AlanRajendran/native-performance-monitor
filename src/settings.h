@@ -4,13 +4,15 @@
 #include <windows.h>
 namespace perf
 {
-inline constexpr wchar_t applicationId[] = L"NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.6";
+inline constexpr wchar_t applicationId[] = L"NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.7";
 struct Settings
 {
     bool panel = true, strip = true, locked = true, compact = false;
     bool insideTaskbar = true;
+    // Loads NVIDIA's management library (about 20 MB) for the memory bus row.
+    bool memoryBus = false;
     Range range = Range::Seconds;
-    int panelX = -1, panelY = -1, panelW = 450, panelH = 760, stripX = -1;
+    int panelX = -1, panelY = -1, panelW = 450, panelH = 1340, stripX = -1;
     int opacity = 25;
     uint64_t adapter = 0;
 };

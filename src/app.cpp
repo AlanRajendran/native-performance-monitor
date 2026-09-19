@@ -23,9 +23,9 @@ using namespace perf;
 using Microsoft::WRL::ComPtr;
 namespace
 {
-constexpr wchar_t controlClass[] = L"NativePerfMonitor.Controller.1.6";
-constexpr wchar_t surfaceClass[] = L"NativePerfMonitor.Surface.1.6";
-constexpr wchar_t probeClass[] = L"NativePerfMonitor.Probe.1.6";
+constexpr wchar_t controlClass[] = L"NativePerfMonitor.Controller.1.7";
+constexpr wchar_t surfaceClass[] = L"NativePerfMonitor.Surface.1.7";
+constexpr wchar_t probeClass[] = L"NativePerfMonitor.Probe.1.7";
 constexpr UINT sampleMessage = WM_APP + 1, themeMessage = WM_APP + 2, geometryMessage = WM_APP + 3,
                restoreMessage = WM_APP + 4, taskbarLayoutMessage = WM_APP + 5, desktopMessage = WM_APP + 6,
                stripMovedMessage = WM_APP + 7, stripMenuMessage = WM_APP + 8, stripClosedMessage = WM_APP + 9;
@@ -50,6 +50,7 @@ enum Command : UINT
     RangeSeconds = 130,
     RangeMinutes = 131,
     TraceToggle = 132,
+    MemoryBusToggle = 133,
     Opacity15 = 114,
     Opacity25 = 115,
     Opacity40 = 116,
@@ -255,8 +256,8 @@ class Application
     }
     bool initialize()
     {
-        stopMessage = RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.6");
-        singleton = CreateMutexW(nullptr, FALSE, L"Local\\NativePerfMonitor.6D845648.v1.6");
+        stopMessage = RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.7");
+        singleton = CreateMutexW(nullptr, FALSE, L"Local\\NativePerfMonitor.6D845648.v1.7");
         if (GetLastError() == ERROR_ALREADY_EXISTS)
         {
             auto existing = FindWindowW(controlClass, nullptr);
@@ -291,7 +292,7 @@ class Application
             return false;
         DWORD ex = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT;
         panel.hwnd = CreateWindowExW(ex, surfaceClass, L"Performance monitor desktop", WS_POPUP, 0, 0, 450,
-                                     760, nullptr, nullptr, instance, &panel);
+                                     1340, nullptr, nullptr, instance, &panel);
         // Never shown: it exists only to be found above or below the desktop host.
         probe = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, probeClass, L"", WS_POPUP | WS_DISABLED,
                                 0, 0, 0, 0, nullptr, nullptr, instance, nullptr);
@@ -344,7 +345,8 @@ class Application
             describe(panel);
         }
         else
-            collector.start(settings.adapter, controller, sampleMessage);
+            collector.enableMemoryBus(settings.memoryBus);
+        collector.start(settings.adapter, controller, sampleMessage);
         startMs = GetTickCount64();
         lastBenchmarkMs = startMs;
         lastBenchmarkCpu = ownCpuTime();
@@ -673,8 +675,10 @@ class Application
         }
         if ((work.h - px(48) < px(float(ph)) || work.w - px(48) < px(float(pw))) && !settings.compact)
         {
-            pw = 420;
-            ph = 720;
+            // Too tall for this screen: the panel lays itself out in two
+            // columns at this width instead of scrolling.
+            pw = 900;
+            ph = 760;
         }
         int x =
             settings.panelX < 0 ? work.x + work.w - px(float(pw + 24)) : work.x + px(float(settings.panelX));
@@ -849,7 +853,8 @@ class Application
     }
     void paint(Surface &s)
     {
-        if (!IsWindowVisible(s.hwnd) || !renderer.factory())
+        // Nothing to show while hidden or while a full-screen app covers the desktop.
+        if (!IsWindowVisible(s.hwnd) || !renderer.factory() || fullscreenForeground())
             return;
         RECT rc{};
         GetClientRect(s.hwnd, &rc);
@@ -1106,6 +1111,7 @@ class Application
         AppendMenuW(history, MF_STRING | (!longRange ? MF_CHECKED : 0), RangeSeconds, L"60 seconds");
         AppendMenuW(history, MF_STRING | (longRange ? MF_CHECKED : 0), RangeMinutes, L"60 minutes");
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(history), L"History");
+        add(MemoryBusToggle, L"NVIDIA memory bus (uses 20 MB more)", settings.memoryBus);
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         add(InstallApp, L"Install for this user…", false, options.isolated);
         add(Startup, L"Start with Windows", startupEnabled(exe), options.isolated);
@@ -1212,7 +1218,7 @@ class Application
         WNDCLASSEXW c{sizeof(c)};
         c.hInstance = instance;
         c.lpfnWndProc = opacityProc;
-        c.lpszClassName = L"NativePerfMonitor.Opacity.1.6";
+        c.lpszClassName = L"NativePerfMonitor.Opacity.1.7";
         c.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         RegisterClassExW(&c);
         auto area = primaryInfo().rcWork;
@@ -1337,13 +1343,13 @@ class Application
         case ResetPositions:
             settings.panelX = settings.panelY = settings.stripX = -1;
             settings.panelW = 450;
-            settings.panelH = 760;
+            settings.panelH = 1340;
             panel.scroll = 0;
             break;
         case StandardSize:
             settings.compact = false;
             settings.panelW = 450;
-            settings.panelH = 760;
+            settings.panelH = 1340;
             break;
         case CompactSize:
             settings.compact = true;
@@ -1366,6 +1372,11 @@ class Application
             break;
         case About:
             MessageBoxW(controller, diagnostics().c_str(), L"Performance monitor — diagnostics", MB_OK);
+            return;
+        case MemoryBusToggle:
+            settings.memoryBus = !settings.memoryBus;
+            collector.enableMemoryBus(settings.memoryBus);
+            persist();
             return;
         case TraceToggle:
             if (trace::enabled())
@@ -1770,7 +1781,7 @@ class Application
                 RECT r{};
                 GetClientRect(s.hwnd, &r);
                 float h = r.bottom * 96.f / s.dpi;
-                float content = panelContentHeight(snapshot.cores);
+                float content = renderer.panelHeight(snapshot, r.right * 96.f / s.dpi, settings.range);
                 s.scroll = std::clamp(s.scroll - GET_WHEEL_DELTA_WPARAM(w) / 120.f * 36, 0.f,
                                       std::max(0.f, content - h));
                 paint(s);
@@ -1816,7 +1827,7 @@ int renderPreview(const std::filesystem::path &dir)
                 for (int opacity : {10, 25, 100})
                 {
                     BitmapSurface b;
-                    const int w = strip ? 688 : 900, h = strip ? 108 : 1760;
+                    const int w = strip ? 688 : 900, h = strip ? 108 : 2680;
                     if (!b.resize(w, h))
                         return 3;
                     auto p = palette(dark);
@@ -1836,6 +1847,19 @@ int renderPreview(const std::filesystem::path &dir)
                     if (strip && opacity != 10)
                         break; // only the two strip looks, not three opacities
                 }
+    // The two-column layout used when the panel is wide or the screen short.
+    for (bool dark : {false, true})
+    {
+        BitmapSurface b;
+        if (!b.resize(1800, 1520))
+            return 3;
+        auto p = palette(dark);
+        p.surface.a = .25f;
+        if (FAILED(renderer.drawBitmap(b, 192, snapshot, p, false, true)))
+            return 4;
+        if (!b.save(dir / (std::wstring(L"panel-wide-") + (dark ? L"dark" : L"light") + L".png")))
+            return 5;
+    }
     return 0;
 }
 } // namespace
@@ -1847,7 +1871,7 @@ int WINAPI wWinMain(HINSTANCE h, HINSTANCE, PWSTR, int)
     {
         auto existing = FindWindowW(controlClass, nullptr);
         if (existing)
-            PostMessageW(existing, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.6"), 0, 0);
+            PostMessageW(existing, RegisterWindowMessageW(L"NativePerfMonitor.Stop.6D845648.v1.7"), 0, 0);
         if (options.prepare)
         {
             std::wstring error;

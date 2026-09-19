@@ -15,5 +15,4 @@ std::vector<CpuCore> enumerateCpuCores();
 std::wstring cpuBrand();
 std::optional<std::pair<unsigned, unsigned>> parseCpuInstance(std::wstring_view value);
 double coreUtilization(const CpuCore &core, const std::map<std::pair<unsigned, unsigned>, double> &values);
-float panelContentHeight(const std::vector<CpuCore> &cores);
 } // namespace perf

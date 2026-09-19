@@ -17,7 +17,7 @@ namespace perf
 // resources under resources/, the $supportedVersions guard and the identity
 // strings in packaging/Uninstall.ps1, the identity strings in src/, and the
 // table of previous lines in importPreviousSettings.
-#define NATIVE_PERF_VERSION "1.6.0"
+#define NATIVE_PERF_VERSION "1.7.0"
 inline constexpr wchar_t displayVersion[] = L"" NATIVE_PERF_VERSION;
 inline constexpr char displayVersionNarrow[] = NATIVE_PERF_VERSION;
 struct InstallPaths

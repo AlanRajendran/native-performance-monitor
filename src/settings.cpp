@@ -22,7 +22,7 @@ std::filesystem::path defaultDataDirectory()
         out = p;
         CoTaskMemFree(p);
     }
-    return out / L"NativePerfMonitor-1.6";
+    return out / L"NativePerfMonitor-1.7";
 }
 bool hasReparseAncestor(const std::filesystem::path &value)
 {
@@ -42,7 +42,7 @@ bool hasReparseAncestor(const std::filesystem::path &value)
     }
     return false;
 }
-static constexpr char currentOwner[] = "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.6";
+static constexpr char currentOwner[] = "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.7";
 static bool ownedData(const std::filesystem::path &dir, const char *owner = currentOwner)
 {
     auto marker = dir / L".nativeperf-settings";
@@ -87,6 +87,8 @@ static Settings readSettings(const std::filesystem::path &dir, const char *owner
                 r.compact = n != 0;
             else if (k == "insideTaskbar")
                 r.insideTaskbar = n != 0;
+            else if (k == "memoryBus")
+                r.memoryBus = n != 0;
             else if (k == "longRange")
                 r.range = n != 0 ? Range::Minutes : Range::Seconds;
             else if (k == "panelX")
@@ -132,6 +134,7 @@ bool importPreviousSettings(const std::filesystem::path &dir, Settings &out)
         const wchar_t *folder;
         const char *owner;
     } previous[] = {
+        {L"NativePerfMonitor-1.6", "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.6"},
         {L"NativePerfMonitor-1.5", "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.5"},
         {L"NativePerfMonitor-1.4", "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.4"},
         {L"NativePerfMonitor-1.3", "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.3"},
@@ -145,6 +148,9 @@ bool importPreviousSettings(const std::filesystem::path &dir, Settings &out)
         // Read-only: the previous line's own files are never touched, so it
         // keeps working unchanged if both are installed.
         out = readSettings(from, p.owner);
+        // The panel layout changes between lines; its size starts fresh.
+        out.panelW = Settings{}.panelW;
+        out.panelH = Settings{}.panelH;
         return true;
     }
     return false;
@@ -192,7 +198,7 @@ bool saveSettings(const std::filesystem::path &dir, const Settings &s, std::wstr
           << "\ncompact=" << s.compact << "\npanelX=" << s.panelX << "\npanelY=" << s.panelY
           << "\npanelW=" << s.panelW << "\npanelH=" << s.panelH << "\nstripX=" << s.stripX
           << "\nopacity=" << s.opacity << "\nadapter=" << s.adapter << "\ninsideTaskbar=" << s.insideTaskbar
-          << "\nlongRange=" << (s.range == Range::Minutes) << "\n";
+          << "\nlongRange=" << (s.range == Range::Minutes) << "\nmemoryBus=" << s.memoryBus << "\n";
         if (!f)
         {
             error = L"Cannot write settings.";
@@ -219,7 +225,7 @@ static std::wstring readStartup()
 {
     wchar_t value[2048]{};
     DWORD bytes = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER, runKey, L"NativePerfMonitor-1.6", RRF_RT_REG_SZ, nullptr, value,
+    if (RegGetValueW(HKEY_CURRENT_USER, runKey, L"NativePerfMonitor-1.7", RRF_RT_REG_SZ, nullptr, value,
                      &bytes) != ERROR_SUCCESS)
         return {};
     return value;
@@ -250,10 +256,10 @@ bool setStartup(const std::filesystem::path &exe, bool enabled, std::wstring &er
         RegCreateKeyExW(HKEY_CURRENT_USER, runKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
     if (st == ERROR_SUCCESS)
     {
-        st = enabled ? RegSetValueExW(key, L"NativePerfMonitor-1.6", 0, REG_SZ,
+        st = enabled ? RegSetValueExW(key, L"NativePerfMonitor-1.7", 0, REG_SZ,
                                       reinterpret_cast<const BYTE *>(expected.c_str()),
                                       DWORD((expected.size() + 1) * sizeof(wchar_t)))
-                     : RegDeleteValueW(key, L"NativePerfMonitor-1.6");
+                     : RegDeleteValueW(key, L"NativePerfMonitor-1.7");
         RegCloseKey(key);
     }
     if (st != ERROR_SUCCESS && st != ERROR_FILE_NOT_FOUND)

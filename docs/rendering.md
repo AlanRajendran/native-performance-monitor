@@ -138,3 +138,47 @@ That is not free, which is why:
 
 Sampling is independent of all of this and continues while the surfaces are
 hidden, so history is never lost to a covered window.
+
+## The 1.7 panel
+
+### One grid
+
+Every time-based section (cores, GPU engines, paging, the RAM and VRAM bars)
+uses the same three columns: a 68 DIP label, the samples, and a 40 DIP value,
+with 8 DIP gutters. Sample *n* therefore sits at the same x in every section,
+so a spike can be read straight down the panel. Text uses four sizes only:
+28 (gauge readings), 13 (titles), 12 (names and amounts), 11 (everything
+secondary), placed by baseline so mixed sizes on one row line up.
+
+`layoutPanel()` both measures and draws. With no target it only returns the
+content height, which is what scrolling and "Scroll for more" use, so the
+height can never disagree with what is drawn. Panels at least 860 DIP wide
+flow into two columns.
+
+### Drawing cost
+
+- **Rasters, not rectangles.** Heat rows, memory bars and block grids are
+  written into a pixel buffer at device resolution (`Raster`) and drawn with
+  one `DrawBitmap` per section, nearest-neighbour, so cells stay crisp. About
+  2,000 cells become a handful of bitmaps.
+- **A cached static layer.** `drawTarget` first records the static marks
+  (their text, position and colour) into a key without drawing; only when the
+  key differs from the last frame is the layer redrawn. Each second the layer
+  is copied and `Pass::Dynamic` draws readings, arcs and rasters on top. The
+  panel frame dropped from 5.9 ms to 3.7 ms (see the native tests' printed
+  timing).
+- **Cached text layouts.** `layout()` keeps `IDWriteTextLayout`s keyed by
+  text, size, weight, width and alignment; labels are built once. The cache is
+  cleared past 600 entries because changing values add new keys.
+- **No drawing when nobody can see it:** hidden panels and a full-screen
+  foreground app skip the frame entirely.
+
+### Memory holders
+
+`MemoryHistory` keeps one `MemorySample` per second and the latest sample of
+each minute: in-use, cache (standby lists) and free RAM, used VRAM, and the
+bytes held by up to twelve applications (the three named in Working hardest
+first, then the largest holders of RAM and of VRAM). The panel draws the three
+named apps in `p.owners`, "Windows, others" as in-use minus those three, then
+cache and free. Application RAM is the private working set, so shared pages
+count under "Windows, others".

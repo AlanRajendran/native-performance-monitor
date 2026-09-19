@@ -9,7 +9,7 @@ namespace perf
 namespace
 {
 constexpr UINT frameMessage = WM_APP + 1, quitMessage = WM_APP + 2, verifyMessage = WM_APP + 3;
-constexpr wchar_t mailboxClass[] = L"NativePerfMonitor.StripMailbox.1.6";
+constexpr wchar_t mailboxClass[] = L"NativePerfMonitor.StripMailbox.1.7";
 
 HWND taskbar()
 {

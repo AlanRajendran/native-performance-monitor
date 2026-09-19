@@ -1,7 +1,9 @@
 #pragma once
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <map>
 #include <optional>
@@ -83,6 +85,102 @@ class History
         return range == Range::Minutes ? minutes_.size() : seconds_.size();
     }
 };
+// A fixed ring of `historyPoints` values of any sample type with a `tick`
+// member, indexed like Ring: gaps become default samples (tick -1), and a
+// push for the tick already at the head replaces it.
+template <class T> class TickRing
+{
+    std::array<T, historyPoints> slots_{};
+    size_t next_ = 0, count_ = 0;
+    int64_t last_ = INT64_MIN;
+    void append(const T &v)
+    {
+        slots_[next_] = v;
+        next_ = (next_ + 1) % historyPoints;
+        count_ = std::min(count_ + 1, historyPoints);
+    }
+
+  public:
+    void push(int64_t tick, T value)
+    {
+        value.tick = tick;
+        if (count_ && tick == last_)
+        {
+            slots_[(next_ + historyPoints - 1) % historyPoints] = value;
+            return;
+        }
+        if (count_ && tick < last_)
+            clear();
+        if (count_)
+            for (int64_t gap = std::min<int64_t>(tick - last_ - 1, int64_t(historyPoints)); gap > 0; --gap)
+                append(T{});
+        append(value);
+        last_ = tick;
+    }
+    std::array<T, historyPoints> ordered() const
+    {
+        std::array<T, historyPoints> out{};
+        for (size_t i = 0; i < count_; ++i)
+            out[historyPoints - count_ + i] = slots_[(next_ + historyPoints - count_ + i) % historyPoints];
+        return out;
+    }
+    void clear()
+    {
+        slots_ = {};
+        next_ = count_ = 0;
+        last_ = INT64_MIN;
+    }
+};
+
+// Who holds memory at one moment. Applications are identified by a hash of
+// their key; bytes are floats, which is ample precision for display.
+inline uint64_t ownerId(std::wstring_view key)
+{
+    return std::hash<std::wstring_view>{}(key);
+}
+struct MemoryOwner
+{
+    uint64_t id = 0;
+    float ram = 0, vram = 0;
+};
+constexpr size_t memoryOwners = 12;
+struct MemorySample
+{
+    int64_t tick = -1;
+    float inUse = std::numeric_limits<float>::quiet_NaN(), cache = std::numeric_limits<float>::quiet_NaN(),
+          free = std::numeric_limits<float>::quiet_NaN(), vramUsed = std::numeric_limits<float>::quiet_NaN();
+    std::array<MemoryOwner, memoryOwners> owners{};
+    unsigned count = 0;
+    const MemoryOwner *find(uint64_t id) const
+    {
+        for (unsigned i = 0; i < count; ++i)
+            if (owners[i].id == id)
+                return &owners[i];
+        return nullptr;
+    }
+};
+// Seconds keep every sample; the hour view keeps the latest sample of each
+// minute, which is what "who holds memory" means at that point in time.
+class MemoryHistory
+{
+    TickRing<MemorySample> seconds_, minutes_;
+
+  public:
+    void push(int64_t second, const MemorySample &s)
+    {
+        seconds_.push(second, s);
+        minutes_.push(second >= 0 ? second / 60 : (second - 59) / 60, s);
+    }
+    std::array<MemorySample, historyPoints> ordered(Range range) const
+    {
+        return range == Range::Minutes ? minutes_.ordered() : seconds_.ordered();
+    }
+    void clear()
+    {
+        seconds_.clear();
+        minutes_.clear();
+    }
+};
 struct EngineKey
 {
     uint64_t adapter = 0;
@@ -96,6 +194,12 @@ struct GpuInstance
     bool hasPid = false, hasEngine = false;
 };
 std::optional<GpuInstance> parseGpuInstance(std::wstring_view s);
+// The engine type in a GPU Engine instance name ("..._engtype_VideoDecode"),
+// without the index some drivers append ("OFA_0" becomes "OFA").
+std::wstring engineType(std::wstring_view instance);
+// Display order and label for the engine types that carry user work. Types
+// such as Security and VR are left out: they are idle for almost everyone.
+std::optional<std::pair<int, std::wstring>> engineLabel(std::wstring_view type);
 double cpuPercent(uint64_t previous100ns, uint64_t current100ns, double elapsed, unsigned processors);
 double capacityPercent(double bytes, double capacity);
 std::wstring normalizePath(std::wstring_view path);

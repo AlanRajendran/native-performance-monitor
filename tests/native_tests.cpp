@@ -64,11 +64,11 @@ int wmain(int argc, wchar_t **argv)
             // once, reading them without touching the previous line's files.
             auto lines = root / L"lines";
             std::filesystem::remove_all(lines);
-            auto previous = lines / L"NativePerfMonitor-1.5", current = lines / L"NativePerfMonitor-1.6";
+            auto previous = lines / L"NativePerfMonitor-1.6", current = lines / L"NativePerfMonitor-1.7";
             std::filesystem::create_directories(previous);
             {
                 std::ofstream marker(previous / L".nativeperf-settings");
-                marker << "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.5\n";
+                marker << "NativePerfMonitor-6D845648-584B-48CE-9904-03E95B0B69E2-v1.6\n";
                 std::ofstream ini(previous / L"settings.ini");
                 ini << "opacity=37\nlongRange=1\nstripX=812\n";
             }
@@ -116,6 +116,24 @@ int wmain(int argc, wchar_t **argv)
                                                     (dark ? L"dark.png" : L"light.png"))),
                                 "native PNG export");
                 }
+        {
+            // Drawing cost of one full panel frame at 100% scale, as the app
+            // does every second. Printed so releases can be compared.
+            BitmapSurface b;
+            require(b.resize(450, 1340), "panel allocation");
+            auto p = palette(true);
+            renderer.drawBitmap(b, 96, sample, p, false, true);
+            LARGE_INTEGER f{}, a{}, z{};
+            QueryPerformanceFrequency(&f);
+            QueryPerformanceCounter(&a);
+            constexpr int frames = 40;
+            for (int i = 0; i < frames; ++i)
+                renderer.drawBitmap(b, 96, sample, p, false, true);
+            QueryPerformanceCounter(&z);
+            const double ms = double(z.QuadPart - a.QuadPart) * 1000 / double(f.QuadPart) / frames;
+            std::cout << "panel frame " << ms << " ms\n";
+            require(ms < 40, "a panel frame stays well inside its one-second budget");
+        }
         for (auto size : {std::pair{360, 460}, std::pair{360, 310}})
         {
             BitmapSurface b;

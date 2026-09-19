@@ -237,6 +237,36 @@ bool isBaseWindowsProcess(std::wstring_view path, std::wstring_view windowsDir, 
                                                   L"memory compression"};
     return std::find(std::begin(names), std::end(names), n) != std::end(names);
 }
+std::wstring engineType(std::wstring_view instance)
+{
+    auto at = instance.find(L"engtype_");
+    if (at == instance.npos)
+        return {};
+    std::wstring type(instance.substr(at + 8));
+    while (!type.empty() && iswdigit(type.back()))
+        type.pop_back();
+    while (!type.empty() && type.back() == L'_')
+        type.pop_back();
+    return type;
+}
+std::optional<std::pair<int, std::wstring>> engineLabel(std::wstring_view type)
+{
+    static const std::pair<const wchar_t *, const wchar_t *> known[] = {
+        {L"3D", L"3D"},
+        {L"Compute", L"Compute"},
+        {L"Cuda", L"Compute"},
+        {L"Copy", L"Copy"},
+        {L"VideoEncode", L"Video encode"},
+        {L"VideoDecode", L"Video decode"},
+        {L"VideoProcessing", L"Video process"},
+        {L"OFA", L"Optical flow"},
+        {L"JPEG_Decode", L"JPEG decode"},
+    };
+    for (int i = 0; i < int(std::size(known)); ++i)
+        if (type == known[i].first)
+            return std::pair{i, std::wstring(known[i].second)};
+    return std::nullopt;
+}
 double busiestEngine(const std::map<EngineKey, double> &engines)
 {
     double top = 0;

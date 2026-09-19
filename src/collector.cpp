@@ -120,10 +120,108 @@ struct Meta
     Meta() = default;
     Meta(const Meta &) = delete;
 };
+// NVIDIA's management library ships with the driver. It is loaded only when
+// the selected adapter is NVIDIA, and only from System32; without it the
+// memory bus row is simply not shown.
+class Nvml
+{
+    struct Utilization
+    {
+        unsigned gpu, memory;
+    };
+    using Init = int (*)();
+    using Count = int (*)(unsigned *);
+    using Handle = int (*)(unsigned, void **);
+    using Name = int (*)(void *, char *, unsigned);
+    using Rates = int (*)(void *, Utilization *);
+    HMODULE dll_ = nullptr;
+    Init shutdown_ = nullptr;
+    Rates rates_ = nullptr;
+    void *device_ = nullptr;
+
+  public:
+    ~Nvml()
+    {
+        close();
+    }
+    void close()
+    {
+        if (shutdown_)
+            shutdown_();
+        if (dll_)
+            FreeLibrary(dll_);
+        dll_ = nullptr;
+        shutdown_ = nullptr;
+        rates_ = nullptr;
+        device_ = nullptr;
+    }
+    void open(const std::wstring &adapter)
+    {
+        close();
+        if (adapter.find(L"NVIDIA") == adapter.npos)
+            return;
+        dll_ = LoadLibraryExW(L"nvml.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (!dll_)
+            return;
+        auto init = reinterpret_cast<Init>(GetProcAddress(dll_, "nvmlInit_v2"));
+        auto count = reinterpret_cast<Count>(GetProcAddress(dll_, "nvmlDeviceGetCount_v2"));
+        auto handle = reinterpret_cast<Handle>(GetProcAddress(dll_, "nvmlDeviceGetHandleByIndex_v2"));
+        auto name = reinterpret_cast<Name>(GetProcAddress(dll_, "nvmlDeviceGetName"));
+        rates_ = reinterpret_cast<Rates>(GetProcAddress(dll_, "nvmlDeviceGetUtilizationRates"));
+        if (!init || !count || !handle || !name || !rates_ || init() != 0)
+        {
+            FreeLibrary(dll_);
+            dll_ = nullptr;
+            rates_ = nullptr;
+            return;
+        }
+        shutdown_ = reinterpret_cast<Init>(GetProcAddress(dll_, "nvmlShutdown"));
+        unsigned devices = 0;
+        count(&devices);
+
+        for (unsigned i = 0; i < devices; ++i)
+        {
+            void *d = nullptr;
+            char n[96]{};
+            if (handle(i, &d) != 0)
+                continue;
+            // With one NVIDIA card it is that card; with several, match by name.
+            if (devices == 1 ||
+                (name(d, n, sizeof(n)) == 0 && adapter.find(std::wstring(n, n + strlen(n))) != adapter.npos))
+            {
+                device_ = d;
+                break;
+            }
+        }
+    }
+    bool available() const
+    {
+        return device_ != nullptr;
+    }
+    double memoryBusy() const
+    {
+        Utilization u{};
+        return device_ && rates_(device_, &u) == 0 ? double(std::min(u.memory, 100U)) : missing;
+    }
+};
 struct Collector::Impl
 {
     PDH_HQUERY fast = nullptr, slow = nullptr;
     Counter cpu, perCpu, engines, adapterMemory, pids, privateWorkingSet, processGpuMemory;
+    Counter standbyReserve, standbyNormal, standbyCore, freeZero, pagesInput;
+    Nvml nvml;
+    std::map<EngineKey, std::wstring> engineTypes;
+    bool busWanted = false;
+    // NVML is loaded only while the memory bus row is wanted.
+    void applyBus()
+    {
+        if (busWanted)
+            nvml.open(current.gpuName);
+        else
+            nvml.close();
+        current.memoryBusAvailable = nvml.available();
+        current.memoryBus = missing;
+    }
     std::vector<Adapter> adapters;
     std::unordered_map<DWORD, std::unique_ptr<Meta>> metadata;
     std::map<DWORD, std::map<EngineKey, double>> gpuWindow;
@@ -153,6 +251,11 @@ struct Collector::Impl
             perCpu.add(fast, L"\\Processor Information(*)\\% Idle Time");
             engines.add(fast, L"\\GPU Engine(*)\\Utilization Percentage");
             adapterMemory.add(fast, L"\\GPU Adapter Memory(*)\\Dedicated Usage");
+            standbyReserve.add(fast, L"\\Memory\\Standby Cache Reserve Bytes");
+            standbyNormal.add(fast, L"\\Memory\\Standby Cache Normal Priority Bytes");
+            standbyCore.add(fast, L"\\Memory\\Standby Cache Core Bytes");
+            freeZero.add(fast, L"\\Memory\\Free & Zero Page List Bytes");
+            pagesInput.add(fast, L"\\Memory\\Pages Input/sec");
             PdhCollectQueryData(fast);
         }
         if (slow)
@@ -188,6 +291,11 @@ struct Collector::Impl
                 current.vramTotal = a.dedicated;
             }
         current.history.clearGpu();
+        current.engines.clear();
+        current.memoryMetrics.clear();
+        engineTypes.clear();
+        applyBus();
+        current.memoryBusAvailable = nvml.available();
         gpuWindow.clear();
         gpuSamples = 0;
         gpuWindowValid = true;
@@ -195,6 +303,67 @@ struct Collector::Impl
         {
             r.gpu = r.vram = missing;
         }
+    }
+    // Who holds RAM and VRAM this second: the cache and free lists from the
+    // memory counters, and the applications holding the most of either.
+    void sampleMemory(uint64_t now, bool ok)
+    {
+        auto sum = [](std::initializer_list<double> values)
+        {
+            double total = 0;
+            for (double v : values)
+            {
+                if (!valid(v))
+                    return missing;
+                total += v;
+            }
+            return total;
+        };
+        current.ramCache =
+            ok ? sum({standbyReserve.value(), standbyNormal.value(), standbyCore.value()}) : missing;
+        current.ramFree = ok ? freeZero.value() : missing;
+        current.paging = ok ? pagesInput.value() * 4096 : missing;
+        current.memoryBus = nvml.available() ? nvml.memoryBusy() : missing;
+        current.memoryMetrics.push(int64_t(now / 1000),
+                                   {current.paging, current.memoryBus, missing, missing});
+
+        MemorySample m;
+        if (valid(current.ramTotal) && valid(current.ramCache) && valid(current.ramFree))
+        {
+            m.cache = float(current.ramCache);
+            m.free = float(current.ramFree);
+            m.inUse = float(std::max(0.0, current.ramTotal - current.ramCache - current.ramFree));
+        }
+        if (valid(current.vramUsed))
+            m.vramUsed = float(current.vramUsed);
+        // The largest holders of each kind, so the owners drawn later are
+        // almost always present in every past sample.
+        std::vector<const AppRow *> byRam, byVram;
+        for (auto &a : current.apps)
+        {
+            byRam.push_back(&a);
+            byVram.push_back(&a);
+        }
+        auto amount = [](double v) { return valid(v) ? v : 0.0; };
+        std::sort(byRam.begin(), byRam.end(),
+                  [&](const AppRow *a, const AppRow *b) { return amount(a->ram) > amount(b->ram); });
+        std::sort(byVram.begin(), byVram.end(),
+                  [&](const AppRow *a, const AppRow *b) { return amount(a->vram) > amount(b->vram); });
+        auto add = [&](const AppRow *a)
+        {
+            const auto id = ownerId(a->key);
+            if (m.count == memoryOwners || m.find(id))
+                return;
+            m.owners[m.count++] = {id, float(amount(a->ram)), float(amount(a->vram))};
+        };
+        // The apps named in the panel first, then the largest holders of each.
+        for (size_t i = 0; i < current.apps.size() && i < 3; ++i)
+            add(&current.apps[i]);
+        for (size_t i = 0; i < byRam.size() && i < memoryOwners / 2; ++i)
+            add(byRam[i]);
+        for (size_t i = 0; i < byVram.size() && m.count < memoryOwners; ++i)
+            add(byVram[i]);
+        current.memory.push(int64_t(now / 1000), m);
     }
     Meta *getMeta(DWORD pid, uint64_t now)
     {
@@ -419,9 +588,40 @@ struct Collector::Impl
                               }
                               global[i->key] += value;
                               gpuWindow[i->pid][i->key] += value;
+                              if (!engineTypes.contains(i->key))
+                                  engineTypes[i->key] = engineType(name);
                           });
         const bool gpuOk = engineOk && !badEngine && !unknownNode && intervalValid && selected != 0;
         current.current[1] = gpuOk ? busiestEngine(global) : missing;
+        // Per engine type, the busiest engine of that type. A type stays listed
+        // once seen, so rows never appear and vanish from one second to the next.
+        std::map<std::wstring, double> byType;
+        for (auto &[key, type] : engineTypes)
+            if (engineLabel(type))
+                byType[type] = std::max(byType[type], global.contains(key) ? global[key] : 0.0);
+        for (auto &[type, value] : byType)
+        {
+            auto it = std::find_if(current.engines.begin(), current.engines.end(),
+                                   [&](const GpuEngine &e) { return e.type == type; });
+            if (it == current.engines.end())
+            {
+                auto label = engineLabel(type);
+                GpuEngine e;
+                e.type = type;
+                e.order = label->first;
+                e.label = label->second;
+                it = current.engines.insert(std::upper_bound(current.engines.begin(), current.engines.end(),
+                                                             e, [](const GpuEngine &a, const GpuEngine &b)
+                                                             { return a.order < b.order; }),
+                                            std::move(e));
+            }
+        }
+        for (auto &e : current.engines)
+        {
+            e.current =
+                gpuOk ? std::clamp(byType.contains(e.type) ? byType[e.type] : 0.0, 0.0, 100.0) : missing;
+            e.history.push(int64_t(now / 1000), {e.current, missing, missing, missing});
+        }
         gpuWindowValid = gpuWindowValid && gpuOk;
         ++gpuSamples;
         double dedicated = 0;
@@ -465,6 +665,7 @@ struct Collector::Impl
         }
         if ((++tick % 2) == 0)
             collectProcesses(now, intervalValid);
+        sampleMemory(now, fastOk && intervalValid);
         current.updatedMs = now;
         current.history.push(int64_t(now / 1000), current.current);
         previousMs = now;
@@ -490,6 +691,7 @@ void Collector::start(uint64_t adapter, HWND notify, UINT message)
         {
             CoInitializeEx(nullptr, COINIT_MULTITHREADED);
             impl_ = std::make_unique<Impl>();
+            impl_->busWanted = memoryBus_;
             impl_->select(adapter_);
             HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_MODIFY_STATE | SYNCHRONIZE);
             LARGE_INTEGER due{};
@@ -505,6 +707,11 @@ void Collector::start(uint64_t adapter, HWND notify, UINT message)
                     break;
                 auto now = GetTickCount64();
                 bool reset = reset_.exchange(false);
+                if (impl_->busWanted != memoryBus_)
+                {
+                    impl_->busWanted = memoryBus_;
+                    impl_->applyBus();
+                }
                 if (impl_->selected != adapter_)
                 {
                     impl_->select(adapter_);

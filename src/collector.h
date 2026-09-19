@@ -18,9 +18,24 @@ struct Adapter
     double dedicated = 0;
     bool primary = false;
 };
+// One engine type of the selected GPU (3D, Copy, Video decode…): the busiest
+// engine of that type, as a percentage.
+struct GpuEngine
+{
+    std::wstring type, label;
+    int order = 0;
+    double current = missing;
+    History history;
+};
 struct Snapshot
 {
     History history;
+    // [0] paging in bytes per second, [1] memory bus busy percentage (NVML).
+    History memoryMetrics;
+    MemoryHistory memory;
+    std::vector<GpuEngine> engines;
+    double ramCache = missing, ramFree = missing, paging = missing, memoryBus = missing;
+    bool memoryBusAvailable = false;
     std::vector<CpuCore> cores;
     std::wstring cpuName;
     Metrics current = noMetrics;
@@ -41,7 +56,7 @@ class Collector
     mutable std::mutex mutex_;
     Snapshot latest_;
     std::atomic<uint64_t> adapter_{0};
-    std::atomic<bool> paused_{false}, reset_{false};
+    std::atomic<bool> paused_{false}, reset_{false}, memoryBus_{false};
 
   public:
     Collector();
@@ -62,6 +77,10 @@ class Collector
     void reset()
     {
         reset_ = true;
+    }
+    void enableMemoryBus(bool on)
+    {
+        memoryBus_ = on;
     }
     Snapshot snapshot() const;
 };

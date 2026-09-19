@@ -1,5 +1,54 @@
 # Changes
 
+## 1.7.0
+
+GPU engines and memory join the cores, in one aligned layout.
+
+### Desktop panel
+
+- **GPU engines over time.** A heat row for each kind of work the graphics
+  card does — 3D, Copy, Video encode, Video decode, Optical flow (frame
+  generation), JPEG decode — as Windows reports them. Windows and the drivers
+  do not expose individual shader cores, so engines are the honest detail.
+- **Memory bus** (NVIDIA cards, off by default): how busy the card's memory
+  is, from the NVIDIA management library that ships with the driver. Turn it
+  on from the tray menu; loading that library costs about 20 MB of memory,
+  which is why it is opt-in.
+- **RAM and VRAM: who holds them, and how that changed.** A bar for every
+  sample, split between the three busiest apps, Windows and other apps,
+  cache and free space; below it the same split right now as a grid of
+  blocks, with each holder's size and its change over the range.
+- **Paging**, a heat row under RAM: how much Windows is reading back from
+  disk, the real sign that memory is short.
+- **One grid.** Every section shares the same columns, so a moment lines up
+  from the cores down through the memory bars. Four text sizes only.
+- The three named apps have their own colours (cornflower, ochre, sage), the
+  same in the bars, the blocks and their Working hardest tiles.
+- **Two columns** when the panel is wider than 860 or the screen is too short
+  for one; the default is 450 × 1340. Sizes carried over from earlier
+  versions are reset, since the layout changed.
+
+### Lighter to run
+
+Measured side by side with 1.6 for two minutes (panel and strip showing):
+0.146% of total CPU against 0.160% (2.05% against 2.24% of one core), and
+46 MB of private memory against 43 MB, despite the larger panel and the new
+data.
+
+- **Two layers.** Everything that rarely changes (the plate, titles, labels,
+  legends, app names) is drawn once and reused; each second only readings,
+  gauge arcs and heat images are drawn over it. A frame went from 5.9 ms to
+  3.7 ms.
+- Heat maps, memory bars and block grids are written straight into one image
+  per section instead of drawn as a thousand rectangles.
+- Text layouts are built once and reused.
+- Nothing is drawn while a full-screen app covers the desktop.
+
+### Release line
+
+- Installs as `NativePerfMonitor-1.7` and imports 1.6 settings.
+
+
 ## 1.6.0
 
 A new look, chosen from five designs.
