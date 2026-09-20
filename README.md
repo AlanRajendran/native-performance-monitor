@@ -12,6 +12,28 @@ inside the taskbar.*
 Native Win32 and Direct2D. No service, driver, browser engine, Explorer
 add-in or network access.
 
+## Download and run
+
+1. Open
+   [download/NativePerfMonitor-2.0.0-win-x64.zip](download/NativePerfMonitor-2.0.0-win-x64.zip)
+   and press **Download raw file** (the download icon, top right).
+2. Right-click the ZIP, choose **Extract All**, and extract it into a new
+   folder. Everything it needs is inside; there is nothing else to install.
+3. In that folder:
+   - **Setup.exe** installs it for your Windows account: shortcuts, an entry in
+     Installed apps, and it starts straight away. No administrator rights.
+   - **PerfMonitor.exe** just runs it from where it is, changing nothing.
+4. Windows will warn that the app is unsigned, because this is a local build:
+   choose **More info › Run anyway**.
+5. To remove it: **Uninstall.exe** in that folder, or Windows Settings ›
+   Apps › Installed apps.
+
+The panel appears on your desktop and the strip inside your taskbar. Right-click
+the tray icon for everything else.
+
+64-bit Windows 11. SHA-256 of the ZIP:
+`f46bfbacc91b6dd484cf7a84ee0c4a445149f2842658d38aa52fd92854c5fc6c`
+
 ## What it shows
 
 **Desktop panel**
@@ -54,21 +76,17 @@ work for it beyond Windows putting the window on screen.
 - The NVIDIA **memory bus** row is off by default: the library behind it costs
   about 20 MB. Turn it on from the tray menu if you want it.
 
-## Install
+## Where it puts things
 
-Build the package (see [Build from source](#build-from-source)), then open the
-`NativePerfMonitor-2.0.0` folder or its ZIP.
-
-- **Setup.exe** installs for the current user, no administrator rights needed:
-  files go to `%LOCALAPPDATA%\Programs\NativePerfMonitor-2.0`, with desktop and
-  Start menu shortcuts and an entry in **Settings › Apps › Installed apps**.
-- **PerfMonitor.exe** runs it portably from the folder, with no shortcuts or
-  registration.
-- **Uninstall.exe**, or Installed apps, removes it. Removal only touches files
-  and entries that this version created.
+| | |
+|---|---|
+| Installed files | `%LOCALAPPDATA%\Programs\NativePerfMonitor-2.0` |
+| Settings | `%LOCALAPPDATA%\NativePerfMonitor-2.0` (one small text file) |
+| Startup (optional) | a `NativePerfMonitor-2.0` value under the current user's Run key |
 
 Each version installs side by side with earlier ones and brings their settings
-across on first run. Settings live in `%LOCALAPPDATA%\NativePerfMonitor-2.0`.
+across on first run, so an older copy keeps working until you remove it.
+Removal only touches files and entries that this version created.
 
 ## Using it
 
@@ -147,3 +165,11 @@ Versions follow `major.minor.patch`, and every release is a git tag. The
 ## License
 
 [MIT](LICENSE.txt)
+
+## Packaging a release
+
+`scripts/CreatePackage.ps1` writes the ready-to-run folder and ZIP into
+`release/`. Copy that ZIP into `download/`, update the link and the SHA-256 in
+this README, commit, and tag the commit `vX.Y.Z`. Only the current version is
+kept in `download/`; earlier ones stay on this machine, outside the
+repository.
