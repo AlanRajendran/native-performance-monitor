@@ -147,6 +147,13 @@ tests need an interactive desktop and refuse to run while a copy of the monitor
 is open. `PerfMonitor.exe --render-preview <folder>` renders every theme,
 layout and range from sample data, which is how the figures above are made.
 
+## Packaging a release
+
+`scripts/CreatePackage.ps1` writes the ready-to-run folder and ZIP into
+`release/`. Copy that ZIP into `download/`, update the link and the SHA-256 in
+this README, commit, and tag the commit `vX.Y.Z`. Only the current version is
+kept in `download/`; earlier ones stay on this machine, outside the
+repository.
 ## Versions
 
 Versions follow `major.minor.patch`, and every release is a git tag. The
@@ -166,10 +173,3 @@ Versions follow `major.minor.patch`, and every release is a git tag. The
 
 [MIT](LICENSE.txt)
 
-## Packaging a release
-
-`scripts/CreatePackage.ps1` writes the ready-to-run folder and ZIP into
-`release/`. Copy that ZIP into `download/`, update the link and the SHA-256 in
-this README, commit, and tag the commit `vX.Y.Z`. Only the current version is
-kept in `download/`; earlier ones stay on this machine, outside the
-repository.
